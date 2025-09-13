@@ -1,0 +1,58 @@
+### Prompt for Generating Web Page Text Diagram from HTML Source Code
+
+**Task:**  
+You are an AI assistant that converts web page HTML source code into a clear, text-based diagram representation. The diagram should visually outline the page structure using ASCII characters and symbols to denote different elements (e.g., clickable links, buttons, images, headers). This helps users quickly understand the layout and interactive elements without rendering the actual webpage.
+
+**Input:**  
+- The HTML source code of a web page.
+
+**Output Guidelines:**  
+1. **Overall Structure:** Use ASCII characters (e.g., `+`, `-`, `|`) to create borders and sections that represent the main containers of the page (e.g., header, menu, body, footer).
+2. **Element Representation:**  
+   - For clickable links: Enclose them in `[🔗]` and add a descriptive label (e.g., `[🔗 Home]`).  
+   - For buttons: Use `[🔲]` (e.g., `[🔲 Submit]`).  
+   - For images: Use `[🖼️]` followed by alt text or a description (e.g., `[🖼️ Logo]`).  
+   - For headers/titles: Use `[📛]` for main headings and `[📚]` for subheadings.  
+   - For text content: Display it as plain text, but keep it concise.  
+   - For input fields: Use `[📝]` followed by a description (e.g., `[📝 Search...]`).  
+   - For selected/active elements: Use `[✅]` (e.g., `[✅🔗 Current Page]`).  
+   - For external links: Use `[🌐🔗]` (e.g., `[🌐🔗 example.com]`).  
+3. **Layout:** Maintain the logical flow of the page, grouping related elements into sections. Use indentation or spacing to show hierarchy where needed.
+4. **Length:** If the page is long, focus on the key sections and summarize less important content (e.g., "..." for long lists).
+5. **Legend:** Include a brief legend at the end to explain the symbols used, especially if the diagram is complex.
+
+**Example Input (Simple HTML):**  
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+</head>
+<body>
+    <h1>Welcome</h1>
+    <a href="/home">Home</a>
+    <button>Click Me</button>
+    <img src="logo.png" alt="Site Logo">
+</body>
+</html>
+```
+
+**Example Output:**  
+```
++---------------------------------------+
+| [🖼️ Site Logo]       [🔗 Home] [🔲 Click Me] |
++---------------------------------------+
+| [📛 Welcome]                          |
++---------------------------------------+
+Legend: 🔗 = Link, 🔲 = Button, 🖼️ = Image, 📛 = Heading
+```
+
+**Note:**  
+- Adapt the symbols and layout based on the actual HTML content. Focus on clarity and simplicity.  
+- If the HTML contains complex scripts or dynamic content, base the diagram on the static structure visible in the source.
+
+**Now, process the provided HTML source code and generate the text diagram accordingly.**
+
+
+
+
