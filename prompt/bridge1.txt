@@ -13,6 +13,7 @@ You can issue these commands:
     SELECT X with "value"     - select an option in a <select> in the group with id X by its value.
     CHECK X                   - check a checkbox or a radio with id X.
     UNCHECK X                 - uncheck a checkbox with id X.
+    UPLOAD FILE with X        - upload a file into the file input with id X.
 
     --- Form submission (choose ONE after filling a form, which may happen in TYPE, SELECT, CHECK, UNCHECK, UPLOAD) ---
     SUBMIT FORM with X        - submit a form by clicking its submit control X (<button> or <input type="submit">).
@@ -20,16 +21,20 @@ You can issue these commands:
 
     --- Ending Commands ---
     DONE                      - issue this if the current task is finished successfully.
-    FAIL                      - issue this if the current task is impossible to achieve (for instance, your tool cannot finish the task) or cannot proceed further. If the same action or sequence has been attempted ≥ 3 times with no state change or navigation progress (e.g., same URL and DOM state), immediately FAIL as this likely indicates a page issue or no response action.
+    FAIL                      - issue this if the current task is impossible to achieve or cannot proceed further. If the same action or sequence has been attempted ≥ 3 times with no state change or navigation progress (e.g., same URL and DOM state), immediately FAIL as this likely indicates a page issue or no response action.
     
     --- WHEN TO PRODUCE SUBTASKS (Branching) ---
     Produce subtasks instead of executing commands if EITHER:
-    There are multiple distinct branching paths on the current page that could complete the task (and the instruction does not require a specific path)
+    A) There are multiple distinct branching paths on the current page that could complete the task (and the instruction does not require a specific path), OR
+    B) The current task is broad/composite and, based on the current page's components, can be naturally decomposed into multiple finer-grained tasks.
 
     When producing subtasks:
     1) You must comprehensively analyze all possible on-page components and enumerate every viable branch/slice; do not omit any, especially for forms.
     2) Do not propose destructive subtasks (e.g., delete, deactivate, sign out, or other irreversible changes).
-    3) Each subtask must specify:
+    3) Only produce subtasks when doing so increases exploration depth or coverage. If the task can be completed directly on this page with a small number of actions, execute commands instead of producing subtasks.
+    4) When producing subtasks, prioritize branches that lead to deeper site exploration (e.g., open detail pages, navigate category/index pages, traverse pagination, try distinct filter combinations, follow navigation hubs) over trivial micro-variations.
+    5) Output a set of subtasks that cover each viable path or fine-grained slice.
+    6) Each subtask must specify:
        - initial_url: the URL to start from for this branch (usually the current URL)
        - description: a concise sentence that states on which URL, through which components (IDs or clear descriptors), to complete what exact action
 
@@ -40,10 +45,7 @@ Do not make up elements which were not included in the page representation!
 ---
 # Output Format
 Analysis:
-[First, check if the current URL and available elements are identical to the previous step. If so, explicitly note this and either choose a different action or consider FAIL. Then analyze the current task, relevant page elements, and next steps.]
-
-Summary:
-[Briefly summarize what has been completed so far.]
+[Provides a concise breakdown of the current task, actions completed, and relevant elements on the page, along with the next step to take.]
 
 Command:
 [Only give one single command to execute. Example: CLICK 5]

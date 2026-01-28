@@ -108,9 +108,9 @@
 }();
 /*
  * From down here
- * 
+ *
  *Copyright (C) 2015 Constantin Tschuertz
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -126,6 +126,11 @@
  *
  */
 
+// ==================== 🔍 DEBUG: 错误捕获 ====================
+window.wrapper_errors = [];
+window.wrapper_debug_logs = [];
+// ====================================================================
+
 // Test for send wrapper (TODO)
 need_to_wait = false;
 var original = XMLHttpRequest.prototype['open'];
@@ -138,7 +143,18 @@ XMLHttpRequest.prototype['open'] = function() {
 function callbackWrap(object, property, argumentIndex, wrapperFactory) {
 	var original = object[property];
 	object[property] = function() {
-		wrapperFactory(this, arguments);
+		// 🔍 DEBUG: 捕获wrapper执行错误
+		try {
+			wrapperFactory(this, arguments);
+		} catch (e) {
+			var errorMsg = '[Wrapper Error] ' + property + ': ' + e.message;
+			console.error(errorMsg, e);
+			window.wrapper_errors.push({
+				property: property,
+				error: e.message,
+				stack: e.stack
+			});
+		}
 		return original.apply(this, arguments);
 	}
 	return original;
@@ -235,8 +251,31 @@ function getXPath(element) {
     if (element.id) {
       return '//*[@id="'+element.id+'"]';
     }
-    // 
 
+    // 🆕 方案3增强：尝试使用稳定属性生成XPath
+    // 1. aria-label（稳定且语义化）
+    var ariaLabel = element.getAttribute('aria-label');
+    if (ariaLabel) {
+      return '//*[@aria-label="'+ariaLabel.replace(/"/g, '\\"')+'"]';
+    }
+
+    // 2. name属性（表单元素常用）
+    var name = element.getAttribute('name');
+    if (name) {
+      return '//*[@name="'+name.replace(/"/g, '\\"')+'"]';
+    }
+
+    // 3. data-*属性（自定义属性，通常稳定）
+    var attrs = element.attributes;
+    for (var i = 0; i < attrs.length; i++) {
+      if (attrs[i].name.startsWith('data-') &&
+          attrs[i].name !== 'data-webagent-event-id' &&
+          attrs[i].value) {
+        return '//*[@'+attrs[i].name+'="'+attrs[i].value.replace(/"/g, '\\"')+'"]';
+      }
+    }
+
+    // 4. 使用相对路径构建XPath（原有逻辑）
 		for (; element && element.nodeType == 1; element = element.parentNode) {
 
 			var sibblings = element.parentNode.childNodes;
@@ -274,15 +313,29 @@ function addEventListenerWrapper(elem, args) {
 	id = elem.id;
 	html_class = elem.className;
   //console.log("AddEventLIstenerWrapper: " + tag + " - Event: " + args[0] + " ID " + id)
+
+	// ✅ 使用增强的getXPath生成XPath（支持id/aria-label/name/data-*/相对路径）
 	dom_adress = getXPath(elem);
 
+  // ✅ 如果XPath生成失败，跳过这个事件（不使用hash ID fallback）
   if( !dom_adress ) {
-    console.log("No dom_adress, using fake-id")
-    elem.id = MD5(elem.outerHTML);
-    dom_adress = '//*[@id="'+elem.id+'"]';
+    console.log("No XPath for element, skipping event:", args[0], tag);
+    return;  // 跳过，不记录这个事件
   }
 
-	function_id = MD5(args[1].toString())
+	// 🔍 DEBUG: 捕获MD5错误
+	var function_id;
+	try {
+		function_id = MD5(args[1].toString());
+	} catch (e) {
+		console.warn('[addEventListener] MD5 failed for handler, using fallback', e);
+		window.wrapper_debug_logs.push({
+			event: args[0],
+			tag: tag,
+			error: 'MD5 failed: ' + e.message
+		});
+		function_id = 'fallback_' + Math.random().toString(36).substr(2, 9);
+	}
 	resp = {
 		"event" : args[0],
 		"function_id" : function_id,
