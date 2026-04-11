@@ -4,10 +4,10 @@ from typing import List, Optional
 class Task:
     def __init__(self, task_id: str, description: str, initial_url: str, parent_id: Optional[str] = None):
         """
-        :param task_id: 任务ID（字符串），例如 "1", "1_1", "1_2_3"
-        :param description: 任务描述
-        :param initial_url: 起始URL
-        :param parent_id: 父任务ID
+        :param task_id: Task ID (string), e.g. "1", "1_1", "1_2_3"
+        :param description: Task description
+        :param initial_url: Starting URL
+        :param parent_id: Parent task ID
         """
         self.task_id = str(task_id)
         self.description = description

@@ -4,7 +4,7 @@ These tasks are used to test meaningful interactions originating from the curren
 General Principles:
 * Each interaction task must correspond to a meaningful business action derived from the current page.
 * Navigation elements with a valid href (i.e., elements that directly navigate via href) should not generate tasks. However, navigation elements without an href—even if they use mechanisms like routerLink or other interaction-based navigation—must be treated as valid interactive tasks and should generate tasks.
-* Avoid all destructive, irreversible, or state-changing operations. This includes, but is not limited to: logging out, resetting passwords, modifying account credentials, changing configuration or settings that permanently changes the application state. Do not generate tasks related to these actions under any circumstances.
+* Avoid all destructive, irreversible, or state-changing operations. This includes, but is not limited to: logging out, resetting or changing passwords, modifying account credentials, changing configuration or settings that permanently changes the application state. Do not generate tasks related to these actions under any circumstances.
 * If the page contains no safe interactions, return an empty Tasks list and explain why in Reasoning.
 * The total number of tasks must not exceed 15. Select only tasks that have plausible value (e.g., may trigger meaningful UI change, new requests, new form interactions, or deeper states).
 

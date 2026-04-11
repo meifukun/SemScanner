@@ -1,5 +1,5 @@
 """
-Business Logic Agent - 改造版（单点分析为主）
+Business Logic Agent - （）
 """
 
 from typing import Dict, Any, List, Optional
@@ -13,27 +13,26 @@ from attack_agent.request_utils import extract_useful_response
 
 class BusinessLogicAgent:
     """
-    业务逻辑漏洞测试Agent - 改造版
+    Agent -
     
-    职责：
-    1. 接收AttackTask（任务描述+完整请求）
-    2. 根据任务描述分析请求/响应
-    3. 生成针对性的测试curl命令
-    4. 调用LLM研判是否存在漏洞
+    ：
+    1. AttackTask（+）
+    2. /
+    3. curl
+    4. LLM
     
-    主流场景：单点分析（单个请求的业务逻辑问题）
-    特殊场景：多步骤测试（IDOR等，需要多个账户）
+    ：（）
+    ：（IDOR，）
     """
     
     def __init__(self, client, log_dir: str = "output/attack_logs/business_logic",
-                 reflection_enabled: bool = True):  # ✅ 新增：反思功能开关
+                 reflection_enabled: bool = True):
         self.client = client
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "business_logic_agent.log"
-        self.reflection_enabled = reflection_enabled  # ✅ 保存配置
+        self.reflection_enabled = reflection_enabled
 
-        # 加载prompt
         self._analysis_prompt = self._load_analysis_prompt()
         self._judgment_prompt = self._load_judgment_prompt()
     
@@ -46,7 +45,7 @@ class BusinessLogicAgent:
             pass
     
     def _load_analysis_prompt(self) -> str:
-        """加载分析prompt（生成测试命令）"""
+        """prompt（）"""
         return """You are a security testing expert analyzing business logic vulnerabilities.
 
 Your task: Given a request and a task description, generate executable commands to test the business logic vulnerability.
@@ -148,7 +147,7 @@ Generate your analysis and test commands:
 """
     
     def _load_judgment_prompt(self) -> str:
-        """加载研判prompt"""
+        """prompt"""
         return """You are a security analyst reviewing business logic vulnerability test results.
 
     Your task: Determine if the test results prove a real business logic vulnerability exists.
@@ -228,13 +227,13 @@ Generate your analysis and test commands:
     #                    accounts: List[str],
     #                    account_manager) -> Dict[str, Any]:
     #     """
-    #     测试多步骤业务逻辑漏洞（特殊场景，如IDOR）
+    #     （，IDOR）
         
     #     Args:
-    #         task_description: 任务描述（如"测试用户A是否能访问用户B的订单"）
-    #         target_request: 完整请求对象
-    #         accounts: 账户列表（如["user1", "user2"]）
-    #         account_manager: 账户管理器
+    #         task_description: （"AB"）
+    #         target_request:
+    #         accounts: （["user1", "user2"]）
+    #         account_manager:
         
     #     Returns:
     #         {
@@ -248,13 +247,11 @@ Generate your analysis and test commands:
     #     self._log(f"  Description: {task_description}")
     #     self._log(f"  Accounts: {accounts}")
         
-    #     # 为每个账户执行相同请求
     #     step_results = []
         
     #     for account_id in accounts:
     #         self._log(f"  Step: {account_id} -> {target_request.get('method')} {target_request.get('url')}")
             
-    #         # 获取账户凭证
     #         credentials = account_manager.get_credentials(account_id)
     #         if not credentials:
     #             self._log(f"    ⚠️  Account not logged in: {account_id}")
@@ -265,9 +262,7 @@ Generate your analysis and test commands:
     #             continue
             
     #         from attack_agent.request_utils import append_credentials_to_curl
-    #         # 构造基础 curl（不含凭证）
     #         base_curl = self._build_base_curl_command(target_request)
-    #         # 追加凭证
     #         full_curl = append_credentials_to_curl(base_curl, credentials)
     #         result = self._execute_curl_command(full_curl)
 
@@ -278,19 +273,16 @@ Generate your analysis and test commands:
     #             "body": result.get("body", "")
     #         })
 
-    #         # ✅ 显示curl退出码和HTTP状态码
     #         self._log(f"    ✓ Executed (curl_exit_code: {result.get('curl_exit_code', 'N/A')})")
     #         http_status = result.get("status", 0)
     #         if http_status > 0:
     #             self._log(f"    HTTP Status: {http_status}")
-    #         # 打印完整响应（不截断）
     #         response_body = result.get("body", "")
     #         self._log(f"    Response length: {len(response_body)} bytes")
     #         self._log(f"    Response: {response_body}")
     #         if result.get("stderr"):
     #             self._log(f"    Stderr: {result['stderr']}")
         
-    #     # 调用LLM研判（使用多步骤分析）
     #     judgment = self._judge_multi_step_vulnerability(
     #         task_description,
     #         step_results
@@ -311,16 +303,14 @@ Generate your analysis and test commands:
                                 target_request: Dict[str, Any],
                                 credentials: Dict[str, Any]) -> tuple:
         """
-        调用LLM生成测试命令
+        LLM
 
         Returns:
-            (测试命令列表, LLM完整输出) 元组
+            (, LLM)
         """
-        # 格式化凭证信息
         from attack_agent.request_utils import format_credentials_for_display
         credentials_info = format_credentials_for_display(credentials)
 
-        # 构造prompt
         original_response = str(target_request.get("response_body", ""))
         extracted_response = extract_useful_response(original_response, max_length=2000)
         prompt = self._analysis_prompt.format(
@@ -330,11 +320,10 @@ Generate your analysis and test commands:
             headers=json.dumps(target_request.get("headers", {}), indent=2),
             body=json.dumps(target_request.get("body", {}), indent=2) if target_request.get("body") else "None",
             response_status=target_request.get("response_status", "N/A"),
-            response_body=extracted_response,  # 使用智能提取后的
+            response_body=extracted_response,
             credentials_info=credentials_info
         )
 
-        # ✅ 记录LLM输入
         self._log(f"\n[Step 1: Generating Test Commands via LLM]")
         self._log(f"{'~'*70}")
         self._log(f"[LLM INPUT - Analysis Prompt]:")
@@ -353,13 +342,11 @@ Generate your analysis and test commands:
 
             llm_output = completion.choices[0].message.content
 
-            # ✅ 记录LLM输出
             self._log(f"[LLM OUTPUT - Analysis Response]:")
             self._log(f"{'~'*70}")
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 解析Test_Commands部分
             commands = self._parse_test_commands(llm_output)
 
             self._log(f"[Parsed {len(commands)} Commands]:")
@@ -367,20 +354,20 @@ Generate your analysis and test commands:
                 self._log(f"  {i}. {cmd}")
             self._log(f"")
 
-            return commands, llm_output  # ✅ 返回元组
+            return commands, llm_output
 
         except Exception as e:
             self._log(f"[BusinessLogic] LLM call failed: {e}")
             import traceback
             self._log(f"[BusinessLogic] Traceback:")
             self._log(traceback.format_exc())
-            return [], ""  # ✅ 错误时返回空列表和空字符串
+            return [], ""
 
     def _parse_test_commands(self, llm_output: str) -> List[str]:
         """
-        从LLM输出中提取测试命令
+        LLM
 
-        支持多种格式:
+        :
         - Test_Commands:
         - **Test_Commands:**
         - **Test_Commands:**
@@ -389,14 +376,12 @@ Generate your analysis and test commands:
           ```
 
         Returns:
-            curl命令列表
+            curl
         """
-        # 查找包含Test_Commands的行（忽略markdown标记**）
         lines = llm_output.splitlines()
         start_idx = -1
 
         for i, line in enumerate(lines):
-            # 匹配 Test_Commands: 或 **Test_Commands:** 等变体
             if re.search(r'\*{0,2}\s*Test_Commands\s*:\s*\*{0,2}', line, re.IGNORECASE):
                 start_idx = i
                 break
@@ -405,30 +390,24 @@ Generate your analysis and test commands:
             self._log("[Warning] No Test_Commands section found in LLM output")
             return []
 
-        # 从start_idx开始提取命令
         commands = []
         in_code_block = False
 
         for line in lines[start_idx + 1:]:
             line = line.strip()
 
-            # 跳过空行
             if not line:
-                # 遇到空行可能表示section结束
-                if commands:  # 如果已经有命令了，空行可能是结束标志
+                if commands:
                     continue
-                else:  # 还没找到命令，继续找
+                else:
                     continue
 
-            # 处理markdown代码块标记
             if line.startswith('```'):
                 in_code_block = not in_code_block
                 continue
 
-            # 如果是curl命令，提取
             if line.startswith('curl'):
                 commands.append(line)
-            # 如果遇到下一个section（如Analysis:, Reasoning:等），停止
             elif re.match(r'^[A-Z][a-z]+\s*:', line) or re.match(r'^\*\*[A-Z][a-z]+\s*:\*\*', line):
                 break
 
@@ -441,7 +420,7 @@ Generate your analysis and test commands:
     
     def _execute_curl_command(self, curl_cmd: str) -> Dict[str, Any]:
         """
-        执行curl命令
+        curl
 
         Returns:
             {status: int, body: str, stderr: str}
@@ -455,10 +434,8 @@ Generate your analysis and test commands:
                 text=True
             )
 
-            # ✅ timeout参数应该在communicate()中，不是Popen()中
             stdout, stderr = process.communicate(timeout=30)
 
-            # ✅ 使用统一的HTTP状态码解析函数
             from attack_agent.request_utils import parse_http_status_from_response
             http_status, response_body = parse_http_status_from_response(stdout)
 
@@ -470,7 +447,6 @@ Generate your analysis and test commands:
             }
 
         except subprocess.TimeoutExpired:
-            # 超时处理
             process.kill()
             return {
                 "status": 0,
@@ -487,7 +463,7 @@ Generate your analysis and test commands:
             }
     
     def _extract_status_code(self, curl_output: str) -> int:
-        """从curl -i输出中提取状态码"""
+        """curl -i"""
         match = re.search(r'HTTP/\d\.\d\s+(\d{3})', curl_output)
         return int(match.group(1)) if match else 0
     
@@ -495,24 +471,21 @@ Generate your analysis and test commands:
                              target_request: Dict[str, Any],
                             execution_results: List[Dict]) -> Dict[str, Any]:
         """
-        调用LLM研判单点漏洞
+        LLM
 
         Returns:
             {vulnerable: bool, analysis: str}
         """
 
-        # ===== 1. 格式化测试执行结果 =====
         results_text = ""
         for i, result in enumerate(execution_results, 1):
             results_text += f"\nTest {i}:\n"
             results_text += f"Command: {result['command']}\n"
             results_text += f"Status: {result['status']}\n"
-            # ✅ 使用智能提取处理响应body
             response_extracted = extract_useful_response(result['body'], max_length=2000)
             results_text += f"Response (extracted):\n{response_extracted}\n"
             results_text += "-" * 40 + "\n"
         
-        # ===== 2. 构造 baseline 信息（与 analysis LLM 类似） =====
         original_response = str(target_request.get("response_body", ""))
         baseline_extracted = extract_useful_response(original_response, max_length=2000)
 
@@ -522,7 +495,6 @@ Generate your analysis and test commands:
             else "None"
         )
 
-        # 构造prompt
         prompt = self._judgment_prompt.format(
         task_description=task_description,
         method=target_request.get("method", "GET"),
@@ -557,7 +529,6 @@ Generate your analysis and test commands:
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 解析结论
             vulnerable = self._parse_vulnerability_conclusion(llm_output)
 
             self._log(f"[Parsed Conclusion]: Vulnerable = {vulnerable}\n")
@@ -579,12 +550,11 @@ Generate your analysis and test commands:
     # def _judge_multi_step_vulnerability(self, task_description: str,
     #                                    step_results: List[Dict]) -> Dict[str, Any]:
     #     """
-    #     调用LLM研判多步骤漏洞
+    #     LLM
         
     #     Returns:
     #         {vulnerable: bool, analysis: str}
     #     """
-    #     # 格式化步骤结果
     #     results_text = ""
     #     for result in step_results:
     #         account = result.get("account", "unknown")
@@ -599,7 +569,6 @@ Generate your analysis and test commands:
             
     #         results_text += "-" * 40 + "\n"
         
-    #     # 使用相同的研判prompt（但上下文不同）
     #     prompt = self._judgment_prompt.format(
     #         task_description=task_description,
     #         execution_results=results_text
@@ -633,17 +602,15 @@ Generate your analysis and test commands:
     
     def _parse_vulnerability_conclusion(self, llm_output: str) -> bool:
         """
-        解析LLM输出判断是否有漏洞
+        LLM
         
-        查找关键字：
+        ：
         - "No vulnerability exists" -> False
-        - 其他描述性文本 -> True
+        -  -> True
         """
-        # 提取Result部分
         match = re.search(r'Result:\s*\n(.+)', llm_output, re.DOTALL)
         
         if not match:
-            # 如果没有Result部分，尝试全文匹配
             if "No vulnerability exists" in llm_output:
                 return False
             elif "vulnerability" in llm_output.lower() and any(
@@ -655,11 +622,9 @@ Generate your analysis and test commands:
         
         result_text = match.group(1).strip()
         
-        # 明确判断
         if "No vulnerability exists" in result_text:
             return False
         
-        # 如果有具体的漏洞描述（非"No vulnerability"开头），认为有漏洞
         if result_text and not result_text.startswith("No"):
             return True
         
@@ -670,16 +635,16 @@ Generate your analysis and test commands:
                         target_request: Dict[str, Any],
                         credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        测试单点业务逻辑漏洞（两阶段版本）
+        （）
 
-        两阶段测试流程：
-        - Stage 1: 初始攻击（使用原始prompt）
-        - Stage 2: 反思攻击（如果Stage 1失败，基于失败分析生成新策略）
+        Two-stage test flow:
+        - Stage 1: initial attack (original prompt)
+        - Stage 2: reflection attack (if Stage 1 fails)
 
         Args:
-            task_description: 任务描述
-            target_request: 完整请求数据
-            credentials: 账户凭证
+            task_description:
+            target_request:
+            credentials: account credentials
 
         Returns:
             {
@@ -690,24 +655,20 @@ Generate your analysis and test commands:
                 "test_results": List[Dict]
             }
         """
-        # ========== Stage 1: 初始攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 1: Initial Attack]")
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1_single_point(task_description, target_request, credentials)
 
-        # 如果检测到漏洞，直接返回
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
             return result_stage1
 
-        # 如果未启用反思，直接返回Stage 1结果
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
 
-        # ========== Stage 2: 反思攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
         self._log(f"{'='*70}")
@@ -727,10 +688,10 @@ Generate your analysis and test commands:
                                      target_request: Dict[str, Any],
                                      credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 1初始攻击（单点分析）
+        Execute Stage 1 initial attack（）
 
         Returns:
-            Stage 1结果字典（包含test_results和llm_analysis用于反思）
+            Stage 1 result dict (includes test_results and llm_analysis for reflection)
         """
         self._log(f"\n{'='*70}")
         self._log(f"[BusinessLogic] New Test Started (Single-Point)")
@@ -751,8 +712,7 @@ Generate your analysis and test commands:
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}")
         self._log(f"")
 
-        # 步骤1: 调用LLM生成测试命令
-        test_commands, llm_analysis = self._generate_test_commands(  # ✅ 获取LLM分析输出
+        test_commands, llm_analysis = self._generate_test_commands(
             task_description,
             target_request,
             credentials
@@ -761,11 +721,11 @@ Generate your analysis and test commands:
         if not test_commands:
             return {
                 "vulnerable": False,
-                "stage": 1,  # ✅ 添加stage标记
+                "stage": 1,
                 "commands_executed": 0,
                 "analysis": "Failed to generate test commands",
                 "test_results": [],
-                "llm_analysis": llm_analysis,  # ✅ 保存LLM分析
+                "llm_analysis": llm_analysis,
                 "note": "No test commands generated"
             }
 
@@ -774,13 +734,11 @@ Generate your analysis and test commands:
             self._log(f"  {i}. {cmd}")
         self._log(f"")
 
-        # 步骤2: 执行测试命令
         execution_results = []
         for i, cmd in enumerate(test_commands, 1):
             self._log(f"[Executing Test {i}/{len(test_commands)}]:")
             self._log(f"  Base command: {cmd}")
 
-            # 追加凭证
             from attack_agent.request_utils import append_credentials_to_curl
             full_cmd = append_credentials_to_curl(cmd, credentials)
 
@@ -790,27 +748,24 @@ Generate your analysis and test commands:
             raw_response = result.get('body', '')
             extracted_response = extract_useful_response(raw_response, max_length=2000)
 
-            # 显示curl退出码和HTTP状态码
             self._log(f"  ✓ Executed (curl_exit_code: {result.get('curl_exit_code', 'N/A')})")
             http_status = result.get("status", 0)
             if http_status > 0:
                 self._log(f"  HTTP Status: {http_status}")
             self._log(f"  Response length: {len(raw_response)} bytes")
-            self._log(f"  Response (extracted):\n{extracted_response}")  # ✅ 打印提取后的
+            self._log(f"  Response (extracted):\n{extracted_response}")
             if 'error' in result:
                 self._log(f"  Error: {result['error']}")
             if 'stderr' in result and result['stderr']:
                 self._log(f"  Stderr: {result['stderr']}")
             self._log(f"")
 
-            # ✅ 保存提取后的响应
             execution_results.append({
                 "command": full_cmd,
                 "status": result.get("status", 0),
-                "body": extracted_response  # ✅ 保存提取后的
+                "body": extracted_response
             })
 
-        # 步骤3: 调用LLM研判
         judgment = self._judge_vulnerability(
             task_description,
             target_request,
@@ -827,29 +782,27 @@ Generate your analysis and test commands:
 
         return {
             "vulnerable": vulnerable,
-            "stage": 1,  # ✅ 标记为Stage 1
+            "stage": 1,
             "commands_executed": len(test_commands),
             "analysis": judgment.get("analysis", ""),
             "test_results": execution_results,
-            "test_commands": test_commands,  # ✅ 保存用于反思
-            "llm_analysis": llm_analysis,  # ✅ 保存LLM分析输出
+            "test_commands": test_commands,
+            "llm_analysis": llm_analysis,
             "note": f"Stage 1 - Immediate detection: {'Vulnerability confirmed' if vulnerable else 'Safe'}"
-        }    # ========== Stage 2: 反思攻击方法（单点分析）==========
+        }
 
     def _execute_stage2_single_point(self, task_description: str,
                                      target_request: Dict[str, Any],
                                      credentials: Dict[str, Any],
                                      stage1_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 2反思攻击（单点分析）
+        Stage 2（）
 
-        特点：完全重新设计测试命令（不限于{PAYLOAD}占位符）
+        ：（{PAYLOAD}）
         """
-        # 1. 构建反思suffix
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix_single_point(stage1_context)
 
-        # 2. 调用LLM生成新测试命令
         self._log(f"[Step 1: Generating Reflection Commands via LLM]")
         new_commands, llm_reflection_output = self._generate_test_commands_with_reflection(
             task_description=task_description,
@@ -869,7 +822,6 @@ Generate your analysis and test commands:
             self._log(f"  {i}. {cmd}")
         self._log(f"")
 
-        # 3. 执行新测试命令
         self._log(f"[Step 2: Executing Reflection Tests]")
         execution_results = []
 
@@ -877,7 +829,6 @@ Generate your analysis and test commands:
             self._log(f"[Executing Test {i}/{len(new_commands)}]:")
             self._log(f"  Base command: {cmd}")
 
-            # 追加凭证
             from attack_agent.request_utils import append_credentials_to_curl
             full_cmd = append_credentials_to_curl(cmd, credentials)
 
@@ -887,27 +838,24 @@ Generate your analysis and test commands:
             raw_response = result.get('body', '')
             extracted_response = extract_useful_response(raw_response, max_length=2000)
 
-            # 显示curl退出码和HTTP状态码
             self._log(f"  ✓ Executed (curl_exit_code: {result.get('curl_exit_code', 'N/A')})")
             http_status = result.get("status", 0)
             if http_status > 0:
                 self._log(f"  HTTP Status: {http_status}")
             self._log(f"  Response length: {len(raw_response)} bytes")
-            self._log(f"  Response (extracted):\n{extracted_response}")  # ✅ 打印提取后的
+            self._log(f"  Response (extracted):\n{extracted_response}")
             if 'error' in result:
                 self._log(f"  Error: {result['error']}")
             if 'stderr' in result and result['stderr']:
                 self._log(f"  Stderr: {result['stderr']}")
             self._log(f"")
 
-            # ✅ 保存提取后的响应
             execution_results.append({
                 "command": full_cmd,
                 "status": result.get("status", 0),
-                "body": extracted_response  # ✅ 保存提取后的
+                "body": extracted_response
             })
 
-        # 4. 调用LLM研判
         judgment = self._judge_vulnerability(
             task_description,
             target_request,
@@ -934,7 +882,6 @@ Generate your analysis and test commands:
             "test_commands": new_commands,
             "llm_reflection_output": llm_reflection_output,
             "reflection_analysis": reflection_suffix,
-            # ✅ 新增：保留Stage 1的完整结果
             "stage1_results": {
                 "test_results": stage1_context.get("test_results", []),
                 "test_commands": stage1_context.get("test_commands", []),
@@ -946,9 +893,9 @@ Generate your analysis and test commands:
 
     def _build_reflection_suffix_single_point(self, stage1_context: Dict[str, Any]) -> str:
         """
-        构建单点分析的反思suffix
+        suffix
 
-        特点：不提{PAYLOAD}占位符，完全重新设计命令
+        ：{PAYLOAD}，
         """
         test_commands = stage1_context.get("test_commands", [])
         test_results = stage1_context.get("test_results", [])
@@ -959,17 +906,14 @@ Generate your analysis and test commands:
         suffix += "STAGE 1 RESULTS (Failed Detection)\n"
         suffix += "="*70 + "\n\n"
 
-        # 1. 之前生成的命令
         suffix += "Previous Test Commands Generated:\n"
         for i, cmd in enumerate(test_commands, 1):
             suffix += f"{i}. {cmd}\n"
         suffix += "\n"
 
-        # 2. 执行结果
         suffix += "Execution Results:\n"
         suffix += "-"*70 + "\n"
 
-        # 去重 + 采样（最多10个）
         sampled = self._sample_test_results(test_results, max_samples=10)
 
         for i, result in enumerate(sampled, 1):
@@ -977,18 +921,15 @@ Generate your analysis and test commands:
             suffix += f"  Command: {result.get('command', 'N/A')}\n"
             suffix += f"  HTTP Status: {result.get('status', 'N/A')}\n"
 
-            # ✅ 使用智能提取
             response = result.get('body', '')
             if response:
                 suffix += f"  Response (extracted):\n{response}\n" 
 
         suffix += "\n"
 
-        # 3. 结果说明
         suffix += f"Result: {'NOT VULNERABLE' if vulnerable is False else 'UNCERTAIN'}\n"
         suffix += "\n"
 
-        # 4. 反思任务说明
         suffix += "="*70 + "\n"
         suffix += "YOUR TASK FOR STAGE 2 - REFLECTION\n"
         suffix += "="*70 + "\n\n"
@@ -1041,13 +982,11 @@ Test_Commands:
                                                 credentials: Dict[str, Any],
                                                 reflection_suffix: str) -> tuple:
         """
-        调用LLM生成反思后的新测试命令
+        LLM
         """
-        # 格式化凭证信息
         from attack_agent.request_utils import format_credentials_for_display
         credentials_info = format_credentials_for_display(credentials)
 
-        # 构造prompt（和Stage 1相同的格式）
         original_response = str(target_request.get("response_body", ""))
         extracted_response = extract_useful_response(original_response, max_length=2000)
         prompt = self._analysis_prompt.format(
@@ -1057,11 +996,10 @@ Test_Commands:
             headers=json.dumps(target_request.get("headers", {}), indent=2),
             body=json.dumps(target_request.get("body", {}), indent=2) if target_request.get("body") else "None",
             response_status=target_request.get("response_status", "N/A"),
-            response_body=extracted_response,  # 使用智能提取后的
+            response_body=extracted_response,
             credentials_info=credentials_info
         )
 
-        # ✅ Append反思内容
         prompt += reflection_suffix
 
         self._log(f"\n[LLM INPUT - Reflection Prompt]:")
@@ -1086,7 +1024,6 @@ Test_Commands:
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 解析Test_Commands部分
             commands = self._parse_test_commands(llm_output)
             return commands, llm_output
 
@@ -1098,12 +1035,11 @@ Test_Commands:
 
     def _sample_test_results(self, test_results: List[Dict], max_samples: int = 10) -> List[Dict]:
         """
-        从测试结果中采样（去重 + 采样）
+        （ + ）
         """
         if not test_results:
             return []
 
-        # 按响应哈希去重
         seen = {}
         for r in test_results:
             resp = r.get("body", "")
@@ -1113,7 +1049,6 @@ Test_Commands:
 
         deduped = list(seen.values())
 
-        # 采样
         if len(deduped) <= max_samples:
             return deduped
         else:

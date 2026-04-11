@@ -5,11 +5,11 @@ from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-# ========== 新增：网络请求记录 ==========
+# ========== New: Network request record ==========
 
 @dataclass
 class NetworkRequest:
-    """单个网络请求的记录"""
+    """Record of a single network request"""
     method: str
     url: str
     headers: Dict[str, str]
@@ -20,28 +20,28 @@ class NetworkRequest:
     response_body: Optional[str] = None
 
     def is_api_request(self) -> bool:
-        """判断是否为API请求（非静态资源）"""
-        static_extensions = {'.js', '.css', '.png', '.jpg', '.jpeg', '.gif', 
+        """Determine if this is an API request (not a static resource)"""
+        static_extensions = {'.js', '.css', '.png', '.jpg', '.jpeg', '.gif',
                            '.ico', '.woff', '.woff2', '.ttf', '.svg', '.webp'}
         url_lower = self.url.lower()
         return not any(url_lower.endswith(ext) for ext in static_extensions)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-# ========== 扩展的模型 ==========
+# ========== Extended models ==========
 @dataclass
 class PageInfo:
-    """增强的网页信息节点"""
+    """Enhanced web page info node"""
     url: str
     title: str
     abstract_page: str
-    outgoing_links: List[str] = field(default_factory=list)  # 新增：页面上的所有链接
-    network_requests: List[NetworkRequest] = field(default_factory=list)  # 新增：访问时的网络请求
-    description: str = ""  # 新增：页面的一句话功能描述
-    logic_tasks: List[str] = field(default_factory=list)  # 👈 新增：存储逻辑任务
-    actions_mapping: Dict[int, Dict[str, Any]] = field(default_factory=dict)  # ✅ 元素定位映射
-    event_mapping: Dict[int, Dict[str, Any]] = field(default_factory=dict)  # 🆕 事件定位映射
+    outgoing_links: List[str] = field(default_factory=list)  # New: all links on the page
+    network_requests: List[NetworkRequest] = field(default_factory=list)  # New: network requests during visit
+    description: str = ""  # New: one-sentence functional description of the page
+    logic_tasks: List[str] = field(default_factory=list)  # New: store logic tasks
+    actions_mapping: Dict[int, Dict[str, Any]] = field(default_factory=dict)  # Element locator mapping
+    event_mapping: Dict[int, Dict[str, Any]] = field(default_factory=dict)  # Event locator mapping
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -53,12 +53,12 @@ class PageInfo:
             "network_requests": [r.to_dict() for r in self.network_requests],
             "logic_tasks": self.logic_tasks,
             "actions_mapping": self.actions_mapping,
-            "event_mapping": self.event_mapping  # 🆕 序列化事件映射
+            "event_mapping": self.event_mapping  # Serialize event mapping
         }
 
 @dataclass
 class Edge:
-    """页面跳转边：从 from_url 到 to_url"""
+    """Page transition edge: from from_url to to_url"""
     from_url: str
     to_url: str
     via_action_id: int
@@ -77,7 +77,7 @@ class Edge:
 
 @dataclass
 class TraceStep:
-    """增强的单步执行轨迹"""
+    """Enhanced single execution trace step"""
     from_url: str
     to_url: str
     action_id: int
@@ -85,7 +85,7 @@ class TraceStep:
     command_kind: str
     jump_kind: str
     raw_cmd: str
-    network_requests: List[NetworkRequest] = field(default_factory=list)  # 新增
+    network_requests: List[NetworkRequest] = field(default_factory=list)  # New
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -101,14 +101,13 @@ class TraceStep:
 
 @dataclass
 class TaskRunTrace:
-    task_id: str  # 改为str以支持层级ID
+    task_id: str  # Changed to str to support hierarchical IDs
     description: str
     steps: List[TraceStep] = field(default_factory=list)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
             "description": self.description,
             "steps": [s.to_dict() for s in self.steps],
         }
-

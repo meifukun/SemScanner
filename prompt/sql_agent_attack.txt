@@ -11,7 +11,7 @@ Before generating commands, analyze the specific `Method`, `URL`, `Headers`, and
 - **Case B: JSON / Standard Form / GET** -> **Use Direct Command Mode** (`-u`).
 
 ### 2. GLOBAL RULES:
-- **Mandatory Flags:** `--batch -v 6 --risk=3`
+- **Mandatory Flags:** `--batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session`
 - **Authentication:** Do NOT include `Cookie` or `Authorization` headers in commands or files (they are injected automatically at runtime).
 - **JSON Quoting:** If using Direct Mode for JSON, wrap the body in SINGLE QUOTES `'` and add `-H "Content-Type: application/json"`.
 - **Formatting:** Output the command as **PLAIN TEXT**. Do NOT use Markdown code blocks (e.g., do not use ```bash ... ```).
@@ -28,11 +28,11 @@ Before generating commands, analyze the specific `Method`, `URL`, `Headers`, and
   4. **Exclude Auth**: STRICTLY NO `Cookie` or `Authorization` headers here.
   5. Empty Line.
   6. The Full Raw Body.
-- `SQLMap_Command`: `sqlmap -r "{{log_dir}}/target.req" --batch -v 6 --risk=3`
+- `SQLMap_Command`: `sqlmap -r "{{log_dir}}/target.req" --batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session`
 
 **Mode 2: Direct Command (For Others)**
 - `Request_File_Content`: Write exactly "None".
-- `SQLMap_Command`: `sqlmap -u "URL" [options] --batch -v 6 --risk=3`
+- `SQLMap_Command`: `sqlmap -u "URL" [options] --batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session`
 
 ---
 
@@ -48,7 +48,7 @@ Request_File_Content:
 None
 
 SQLMap_Command:
-sqlmap -u "http://target.com/news?id=1" --batch -v 6 --risk=3
+sqlmap -u "http://target.com/news?id=1" --batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session
 
 **Example 2: JSON POST (Direct Mode)**
 Input: POST /api/login with JSON body.
@@ -60,7 +60,7 @@ Request_File_Content:
 None
 
 SQLMap_Command:
-sqlmap -u "http://target.com/api/login" -H "Content-Type: application/json" --data '{{"user":"admin*"}}' --batch -v 6 --risk=3
+sqlmap -u "http://target.com/api/login" -H "Content-Type: application/json" --data '{{"user":"admin*"}}' --batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session
 
 **Example 3: Standard POST (Direct Mode)**
 Input: POST /search with body `q=test&page=1`.
@@ -72,7 +72,7 @@ Request_File_Content:
 None
 
 SQLMap_Command:
-sqlmap -u "http://target.com/search" --data "q=test&page=1" --batch -v 6 --risk=3
+sqlmap -u "http://target.com/search" --data "q=test&page=1" --batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session
 
 **Example 4: Multipart Upload (File Mode - Complex)**
 Input: POST /ajax.php?action=save_plan with multipart data.
@@ -103,7 +103,7 @@ Content-Disposition: form-data; name="penalty_rate"
 ------WebKitFormBoundaryD2PBJ4TB2rqzEAU8--
 
 SQLMap_Command:
-sqlmap -r "<INSERT_ACTUAL_LOG_DIR_HERE>/target.req" --batch -v 6 --risk=3
+sqlmap -r "<INSERT_ACTUAL_LOG_DIR_HERE>/target.req" --batch -v 6 --risk=3 --answers="keep testing=Y" --flush-session
 
 ---
 

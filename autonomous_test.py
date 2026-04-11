@@ -4,126 +4,127 @@ import sys
 import os
 from openai import OpenAI
 
-# 添加项目根目录到path
+# Add the project root directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from high_level_agent.decision_agent import HighLevelDecisionAgent
+from utils.token_tracker import make_tracked_client, tracker
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='自主化Web应用安全测试框架',
+        description='Autonomous Web Application Security Testing Framework',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例用法:
+Example usage:
 
-  # 需要登录的应用（默认使用LLM智能规划）
+  # Application requiring login (uses LLM-based intelligent planning by default)
   python autonomous_test.py \\
       --target_url "http://127.0.0.1:3000/login" \\
       --login_task "Log in with username: admin, password: admin123" \\
       --output "output/test1"
 
-  # 无需登录的应用
+  # Application without login
   python autonomous_test.py \\
       --target_url "http://127.0.0.1:3000" \\
       --output "output/test2"
 
-  # 登录后指定爬取起始URL
+  # Specify crawl start URL after login
   python autonomous_test.py \\
       --target_url "http://127.0.0.1:3000/login" \\
       --login_task "Log in with username: admin, password: admin123" \\
       --crawl_start_url "http://127.0.0.1:3000/admin" \\
       --output "output/test3"
 
-  # 🆕 消融实验：使用穷举模式（为每个请求生成所有漏洞类型的任务）
+  # 🆕 Ablation experiment: use exhaustive mode (generate tasks for all vulnerability types per request)
   python autonomous_test.py \\
       --target_url "http://127.0.0.1:3000/login" \\
       --login_task "Log in with username: admin, password: admin123" \\
       --output "output/experiment_exhaustive" \\
       --attack_planning_mode exhaustive
 
-  python autonomous_test.py --target_url "http://127.0.0.1:4281/#/login" --login_task "Log in with username: 1474715931@qq.com, password: 123456" --output "output/juiceshop" &> logs/juiceshop.log
+  python autonomous_test.py --target_url "http://127.0.0.1:3000/login" --login_task "Log in with username: admin, password: admin123" --output "output/test4" &> logs/test4.log
 
-工作流程:
-  1. 执行登录（可选） → 如果提供login_task则执行登录
-  2. 深度爬取 → 从指定URL/登录后页面/目标URL开始爬取（50页）
-  3. 任务规划 → 识别并执行应用任务
-  4. 攻击规划 → 分析潜在攻击面（支持LLM智能规划或穷举全测）
-  5. 攻击执行 → 测试各类漏洞
-  6. 生成报告 → 输出详细测试结果
+Workflow:
+  1. Login (optional) -> Execute login if login_task is provided
+  2. Deep crawl -> Crawl from specified URL / post-login page / target URL (50 pages)
+  3. Task planning -> Identify and execute application tasks
+  4. Attack planning -> Analyze potential attack surface (supports LLM intelligent planning or exhaustive testing)
+  5. Attack execution -> Test various vulnerabilities
+  6. Report generation -> Output detailed test results
         """
     )
 
     parser.add_argument(
         "--target_url",
         required=True,
-        help="登录页面的URL（例如: http://127.0.0.1:3000/login）"
+        help="URL of the login page (e.g., http://127.0.0.1:3000/login)"
     )
 
     parser.add_argument(
         "--login_task",
         required=False,
         default=None,
-        help="可选的登录任务描述（例如: 'Log in with username: admin, password: admin123'）。如果不提供，将直接从目标URL开始爬取"
+        help="Optional login task description (e.g., 'Log in with username: admin, password: admin123'). If not provided, crawling will start directly from the target URL"
     )
 
     parser.add_argument(
         "--crawl_start_url",
         required=False,
         default=None,
-        help="可选的爬取起始URL。登录后会导航到此URL开始爬取（例如: 'http://127.0.0.1:3000/admin'）。如果不提供，将从登录后页面或目标URL开始爬取"
+        help="Optional crawl start URL. After login, navigates to this URL to begin crawling (e.g., 'http://127.0.0.1:3000/admin'). If not provided, crawling starts from the post-login page or the target URL"
     )
 
     parser.add_argument(
         "--output",
         required=True,
-        help="结果输出目录（例如: output/test1）"
+        help="Output directory for results (e.g., output/test1)"
     )
 
     parser.add_argument(
         "--attack_planning_mode",
         choices=["llm", "exhaustive"],
         default="llm",
-        help="攻击规划模式: llm（LLM智能规划，默认）或 exhaustive（穷举全测，用于消融实验）"
+        help="Attack planning mode: llm (LLM intelligent planning, default) or exhaustive (test all types, for ablation experiments)"
     )
 
     args = parser.parse_args()
 
-    # 初始化OpenAI client
+    # Initialize OpenAI client
+    # Supports any OpenAI-compatible API
     client = OpenAI(
-        api_key="sk-8b1270b35adc418e8b878c7df3d7f54c",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key=os.environ.get("LLM_API_KEY", "YOUR_API_KEY_HERE"),
+        base_url=os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1"),
     )
 
-    # client = OpenAI(
-    #     api_key="sk-cfb6401c67664818bf8e961d59736575",
-    #     base_url="https://api.deepseek.com"
-    # )
+    # Wrap the original client with a tracking wrapper; all LLM calls will automatically record token usage
+    client = make_tracked_client(client)
+    tracker.set_default_model("default")  # Keep consistent with DEFAULT_MODEL in llm_config.py
 
-    # 打印启动信息
+    # Print startup information
     print("\n" + "="*70)
-    print("🚀 自主化安全测试框架")
+    print("🚀 Autonomous Security Testing Framework")
     print("="*70)
-    print(f"目标URL: {args.target_url}")
+    print(f"Target URL: {args.target_url}")
     if args.login_task:
-        print(f"登录任务: {args.login_task}")
+        print(f"Login task: {args.login_task}")
     else:
-        print(f"登录任务: 无（直接爬取）")
+        print(f"Login task: None (direct crawling)")
     if args.crawl_start_url:
-        print(f"爬取起始URL: {args.crawl_start_url}")
-    print(f"输出目录: {args.output}")
+        print(f"Crawl start URL: {args.crawl_start_url}")
+    print(f"Output directory: {args.output}")
 
-    # 🆕 显示攻击规划模式
+    # 🆕 Display attack planning mode
     mode_display = {
-        "llm": "LLM智能规划",
-        "exhaustive": "穷举全测（消融实验）"
+        "llm": "LLM Intelligent Planning",
+        "exhaustive": "Exhaustive Testing (Ablation Experiment)"
     }
-    print(f"攻击规划模式: {mode_display.get(args.attack_planning_mode, args.attack_planning_mode)}")
+    print(f"Attack planning mode: {mode_display.get(args.attack_planning_mode, args.attack_planning_mode)}")
 
     print("="*70)
     print("")
 
-    # 创建顶层Agent
+    # Create top-level Agent
     agent = HighLevelDecisionAgent(
         client=client,
         initial_url=args.target_url,
@@ -131,36 +132,36 @@ def main():
         crawl_start_url=args.crawl_start_url,
         output_dir=args.output,
         config={
-            "attack_planning_mode": args.attack_planning_mode  # 🆕 传入攻击规划模式
+            "attack_planning_mode": args.attack_planning_mode  # 🆕 Pass attack planning mode
         }
     )
 
-    # 执行测试
+    # Execute tests
     try:
         results = agent.run()
 
-        # 打印最终摘要
+        # Print final summary
         print("\n" + "="*70)
-        print("✅ 测试完成 - 快速摘要")
+        print("✅ Testing Complete - Quick Summary")
         print("="*70)
-        print(f"发现页面数: {results['crawling']['total_pages']}")
-        print(f"执行任务数: {results['testing']['tasks_executed']}")
-        print(f"攻击测试数: {results['testing']['attacks_planned']}")
-        print(f"发现漏洞数: {results['testing']['vulnerabilities_found']}")
-        print(f"总用时: {results['timing']['total_seconds']:.1f}秒")
+        print(f"Pages discovered: {results['crawling']['total_pages']}")
+        print(f"Tasks executed: {results['testing']['tasks_executed']}")
+        print(f"Attack tests: {results['testing']['attacks_planned']}")
+        print(f"Vulnerabilities found: {results['testing']['vulnerabilities_found']}")
+        print(f"Total time: {results['timing']['total_seconds']:.1f}s")
         print("")
-        print(f"📁 详细报告: {args.output}/final_report.json")
-        print(f"📁 日志文件: {args.output}/high_level_agent.log")
+        print(f"📁 Detailed report: {args.output}/final_report.json")
+        print(f"📁 Log file: {args.output}/high_level_agent.log")
         print("="*70)
 
         return 0
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  测试被用户中断")
+        print("\n\n⚠️  Testing interrupted by user")
         return 1
 
     except Exception as e:
-        print(f"\n\n❌ 测试失败: {e}")
+        print(f"\n\n❌ Testing failed: {e}")
         import traceback
         traceback.print_exc()
         return 1

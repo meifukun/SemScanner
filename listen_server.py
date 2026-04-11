@@ -7,12 +7,12 @@ from datetime import datetime
 import socket
 
 class SimpleXssHandler(BaseHTTPRequestHandler):
-    # 取消默认把日志写到 stderr（可按需打开）
+    # Suppress default logging to stderr (can be enabled as needed)
     def log_message(self, format, *args):
         return
 
     def _set_common_headers(self):
-        # 最小响应头：允许跨域，文本utf-8
+        # Minimal response headers: allow CORS, text utf-8
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
@@ -28,12 +28,12 @@ class SimpleXssHandler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
-            # 只处理包含 "data" 参数的请求，若无 "data" 参数，则不做处理
+            # Only process requests containing a "data" parameter; if no "data" parameter, skip
             raw_vals = qs.get("data", [])
             if raw_vals:
                 data_raw = raw_vals[0]
             else:
-                # 如果没有 data 参数，直接返回，不记录任何信息
+                # If no data parameter, return directly without logging anything
                 self.send_response(400)  # Optional: Return an error response
                 self._set_common_headers()
                 self.end_headers()
@@ -46,14 +46,14 @@ class SimpleXssHandler(BaseHTTPRequestHandler):
             except Exception:
                 data_decoded = data_raw
 
-            # 获取日志文件路径和已记录的payload集合
+            # Get the log file path and the set of recorded payloads
             logfile = getattr(self.server, "xss_logfile", None)
             if logfile:
-                # 用于存储已记录的 data
+                # Storage for recorded data
                 if not hasattr(self.server, 'logged_data'):
-                    self.server.logged_data = set()  # 用来存储已记录的 payload
+                    self.server.logged_data = set()  # Store recorded payloads
 
-                # 检查 data 是否已经被记录
+                # Check if data has already been recorded
                 if data_decoded in self.server.logged_data:
                     self.send_response(200)
                     self._set_common_headers()
@@ -61,10 +61,10 @@ class SimpleXssHandler(BaseHTTPRequestHandler):
                     self.wfile.write(b"OK")
                     return
 
-                # 将 data 添加到已记录的集合
+                # Add data to the recorded set
                 self.server.logged_data.add(data_decoded)
 
-                # 写入日志文件
+                # Write to log file
                 parent = os.path.dirname(logfile)
                 if parent:
                     os.makedirs(parent, exist_ok=True)
@@ -90,8 +90,8 @@ class SimpleXssHandler(BaseHTTPRequestHandler):
 
 def start_xss_listener(bind_addr: str = "127.0.0.1", port: int = 9091, logfile: str = "./xss_captured.txt", no_print: bool = False):
     """
-    启动 HTTPServer（在后台线程运行），返回 (server, thread).
-    调用者负责在合适时机调用 server.shutdown().
+    Start an HTTPServer (running in a background thread), returns (server, thread).
+    The caller is responsible for calling server.shutdown() at the appropriate time.
     """
     server = HTTPServer((bind_addr, port), SimpleXssHandler)
     # store logfile path and no_print flag on server so handler can access it
@@ -103,7 +103,7 @@ def start_xss_listener(bind_addr: str = "127.0.0.1", port: int = 9091, logfile: 
     return server, thr
 
 def find_free_port():
-    """辅助：找一个空闲端口（仅用于用户调试/提示）"""
+    """Helper: find a free port (only for user debugging/prompting)"""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("", 0))
     addr, port = s.getsockname()

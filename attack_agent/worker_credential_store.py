@@ -1,7 +1,7 @@
 """
-WorkerCredentialStore - 单个攻击线程的凭证存储
+WorkerCredentialStore - Credential store for a single attack worker thread.
 
-每个worker线程独立管理自己的凭证和CSRF token
+Each worker thread independently manages its own credentials and CSRF tokens.
 """
 
 import re
@@ -10,20 +10,20 @@ from typing import Dict, Any
 
 class WorkerCredentialStore:
     """
-    单个worker线程的凭证和token存储
-    
-    职责：
-    1. 从driver提取并存储凭证（cookies, localStorage, sessionStorage, headers）
-    2. 从页面提取并存储CSRF token
-    3. 提供凭证和token的访问接口
+    Credential and token store for a single worker thread.
+
+    Responsibilities:
+    1. Extract and store credentials from driver (cookies, localStorage, sessionStorage, headers)
+    2. Extract and store CSRF tokens from the page
+    3. Provide access interface for credentials and tokens
     """
 
     def __init__(self, worker_id: int):
         """
-        初始化worker凭证存储
-        
+        Initialize the worker credential store.
+
         Args:
-            worker_id: worker编号（用于日志标识）
+            worker_id: Worker ID (used for log identification)
         """
         self.worker_id = worker_id
         self.credentials: Dict[str, Any] = {}
@@ -31,38 +31,38 @@ class WorkerCredentialStore:
 
     def update_from_driver(self, driver, account_manager):
         """
-        从driver提取最新凭证和CSRF token
-        
+        Extract the latest credentials and CSRF tokens from the driver.
+
         Args:
-            driver: Selenium WebDriver实例
-            account_manager: AccountManager实例（用于调用_extract_credentials方法）
+            driver: Selenium WebDriver instance
+            account_manager: AccountManager instance (used to call _extract_credentials)
         """
-        # 1. 提取凭证（cookies, localStorage, sessionStorage, headers）
+        # 1. Extract credentials (cookies, localStorage, sessionStorage, headers)
         self.credentials = account_manager._extract_credentials(driver)
 
-        # 2. 提取CSRF token
+        # 2. Extract CSRF tokens
         self.csrf_tokens = self._extract_csrf_tokens(driver)
 
     def _extract_csrf_tokens(self, driver) -> Dict[str, str]:
         """
-        从页面提取CSRF相关token
-        
-        提取来源：
-        1. hidden input（name包含csrf/token/nonce）
-        2. meta标签（name="csrf-token" 或 "csrf_token"）
-        3. localStorage（key包含csrf/token）
-        
+        Extract CSRF-related tokens from the page.
+
+        Sources:
+        1. hidden inputs (name contains csrf/token/nonce)
+        2. meta tags (name="csrf-token" or "csrf_token")
+        3. localStorage (key contains csrf/token)
+
         Args:
-            driver: Selenium WebDriver实例
-        
+            driver: Selenium WebDriver instance
+
         Returns:
-            {token_name: token_value} 字典
+            {token_name: token_value} dict
         """
         try:
             tokens = driver.execute_script("""
                 var tokens = {};
                 
-                // 1. 从hidden input提取（name包含csrf/token/nonce关键词）
+                // 1. Extract from hidden inputs (name contains csrf/token/nonce keywords)
                 document.querySelectorAll('input[type="hidden"]').forEach(function(input) {
                     if (!input.name) return;
                     
@@ -76,7 +76,7 @@ class WorkerCredentialStore:
                     }
                 });
                 
-                // 2. 从meta标签提取
+                // 2. Extract from meta tags
                 var metaSelectors = [
                     'meta[name="csrf-token"]',
                     'meta[name="csrf_token"]',
@@ -92,7 +92,7 @@ class WorkerCredentialStore:
                     }
                 });
                 
-                // 3. 从localStorage提取
+                // 3. Extract from localStorage
                 try {
                     for (var i = 0; i < localStorage.length; i++) {
                         var key = localStorage.key(i);
@@ -106,7 +106,7 @@ class WorkerCredentialStore:
                         }
                     }
                 } catch(e) {
-                    // localStorage可能被禁用
+                    // localStorage may be disabled
                 }
                 
                 return tokens;
@@ -115,38 +115,38 @@ class WorkerCredentialStore:
             return tokens or {}
 
         except Exception as e:
-            # JavaScript执行失败，返回空字典
+            # JavaScript execution failed, return empty dict
             return {}
 
     def get_credentials(self) -> Dict[str, Any]:
         """
-        获取当前存储的凭证
-        
+        Get currently stored credentials.
+
         Returns:
-            凭证字典（包含cookies, localStorage, sessionStorage, headers）
+            Credentials dict (includes cookies, localStorage, sessionStorage, headers)
         """
         return self.credentials
 
     def get_csrf_tokens(self) -> Dict[str, str]:
         """
-        获取当前存储的CSRF token
-        
+        Get currently stored CSRF tokens.
+
         Returns:
-            {token_name: token_value} 字典
+            {token_name: token_value} dict
         """
         return self.csrf_tokens
 
     def has_csrf_tokens(self) -> bool:
         """
-        检查是否有CSRF token
-        
+        Check whether any CSRF tokens are present.
+
         Returns:
-            True if有token, False otherwise
+            True if tokens exist, False otherwise
         """
         return len(self.csrf_tokens) > 0
 
     def __repr__(self):
-        """字符串表示"""
+        """String representation"""
         csrf_count = len(self.csrf_tokens)
         csrf_names = list(self.csrf_tokens.keys()) if csrf_count > 0 else []
 

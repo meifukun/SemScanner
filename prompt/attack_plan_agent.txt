@@ -103,9 +103,6 @@ You MUST use ONLY the following vulnerability types:
 
 - SQL_INJECTION: Database query injection
 - XSS: Cross-site scripting
-- SSRF: Server-side request forgery
-- SSTI: Server-Side Template Injection
-- CMDI: Command injection
 - BUSINESS_LOGIC:
   - IDOR (Insecure Direct Object Reference): Testing access to other users' resources or access protected resources
   - Business logic flaws (price, quantity and so on)
@@ -122,7 +119,7 @@ You must classify each request into one of three categories based on its INPUT S
 
 CATEGORY A: Explicit Parameters Exist (Full Scan)
 - Trigger: Request has Query Parameters (e.g., `?q=test`) OR a Body (JSON, Form, XML).
-- Action: You MUST generate tasks for ALL vulnerability types (SQL_INJECTION, XSS, SSRF, SSTI, CMDI, BUSINESS_LOGIC).
+- Action: You MUST generate tasks for ALL vulnerability types.
 - Reasoning: Explicit inputs are the primary vector for injection attacks.
 
 CATEGORY B: Path Parameter Only (Logic Scan)
@@ -195,17 +192,11 @@ The body parameters 'template', 'format', 'source_url' are user-controllable. We
 Attack_Tasks:
 [TASK001] SQL_INJECTION | REF_ID: req_a1b2c3d4 | Test for SQL injection
 [TASK002] XSS | REF_ID: req_a1b2c3d4 | Test for XSS
-[TASK003] SSRF | REF_ID: req_a1b2c3d4 | Test for SSRF
-[TASK004] SSTI | REF_ID: req_a1b2c3d4 | Test for SSTI
-[TASK005] CMDI | REF_ID: req_a1b2c3d4 | Test for Command Injection
-[TASK006] BUSINESS_LOGIC | REF_ID: req_a1b2c3d4 | Test for IDOR/Logic flaws
+[TASK003] BUSINESS_LOGIC | REF_ID: req_a1b2c3d4 | Test for IDOR/Logic flaws
 
-[TASK007] SQL_INJECTION | REF_ID: req_e5f6g7h8 | Test for SQL injection
-[TASK008] XSS | REF_ID: req_e5f6g7h8 | Test for XSS
-[TASK009] SSRF | REF_ID: req_e5f6g7h8 | Test for SSRF
-[TASK010] SSTI | REF_ID: req_e5f6g7h8 | Test for SSTI
-[TASK011] CMDI | REF_ID: req_e5f6g7h8 | Test for Command Injection
-[TASK012] BUSINESS_LOGIC | REF_ID: req_e5f6g7h8 | Test for Business Logic flaws
+[TASK004] SQL_INJECTION | REF_ID: req_e5f6g7h8 | Test for SQL injection
+[TASK005] XSS | REF_ID: req_e5f6g7h8 | Test for XSS
+[TASK06] BUSINESS_LOGIC | REF_ID: req_e5f6g7h8 | Test for Business Logic flaws
 
 --------------------------------------------------
 Example 2: skip_requests

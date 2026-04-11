@@ -11,6 +11,7 @@ Reasoning:
 - Explicitly justify the ordering of tasks based on business logic dependencies and natural workflow progression (e.g., authentication before sensitive operations, data entry before submission, etc.).
 - Explain in detail how you deduplicated against the historical tasks and why each proposed task is novel and non-repetitive.
 - If all meaningful tasks on this page are already covered by the historical tasks, state this clearly and produce an empty Tasks section.
+- If the page’s business logic implies additional workflows or UI states that are not currently visible but would reasonably appear after prerequisite actions on other pages (e.g., adding data, enabling features, or changing configuration), you may pre-generate a small number of high-level, non-specific placeholder tasks to capture these latent states. Such tasks must be phrased abstractly, avoid referencing concrete UI elements, and should only be included when strongly implied by the page’s function.
 
 Tasks:
 - One task per line, each a short imperative sentence (start with a verb).

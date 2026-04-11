@@ -8,16 +8,16 @@ from task.tasks import Task
 
 class TaskQueue:
     """
-    简单任务队列：内存 + JSONL 落盘
-    - 不做并发保护（后续如需要可加锁/SQLite）
+    Simple task queue: in-memory + JSONL persistence
+    - No concurrency protection (can add locks/SQLite later if needed)
     """
     def __init__(self, path: str = "output/tasks_queue.jsonl", startid = 100):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._buf: List[Task] = []
-        self._next_id_hint = startid  # 自动分配 task_id 的起点（避免与你现有的冲突）
+        self._next_id_hint = startid  # Starting point for auto-assigned task_id (to avoid conflicts with existing ones)
 
-        self._discovered_tasks: List[Task] = []  # 额外的任务队列，用于存储新发现的任务
+        self._discovered_tasks: List[Task] = []  # Extra task queue for storing newly discovered tasks
 
     def next_task_id(self) -> str:
         tid = self._next_id_hint
@@ -36,7 +36,7 @@ class TaskQueue:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
     def push_discovered_task(self, task: Task, persist: bool = True):
-        """将发现的任务推送到 discovered_tasks 队列"""
+        """Push discovered task to discovered_tasks queue"""
         self._discovered_tasks.append(task)
         if persist:
             payload = {
@@ -51,23 +51,23 @@ class TaskQueue:
         return self._buf.pop(0) if self._buf else None
 
     def pop_discovered(self) -> Optional[Task]:
-        """从 discovered_tasks 队列中弹出任务"""
+        """Pop task from discovered_tasks queue"""
         return self._discovered_tasks.pop(0) if self._discovered_tasks else None
 
     def __len__(self):
         return len(self._buf)
-    
+
     def __len_discovered(self):
-        """获取 discovered_tasks 队列中的任务数量"""
+        """Get the number of tasks in discovered_tasks queue"""
         return len(self._discovered_tasks)
 
     def peek_all(self) -> List[Task]:
         return list(self._buf)
-    
+
     def peek_discovered(self) -> List[Task]:
         return list(self._discovered_tasks)
-    
-    # === 新增：结构化拿到所有任务（描述、URL、ID） ===
+
+    # === New: Get all tasks in structured form (description, URL, ID) ===
     def all_tasks(self) -> List[str]:
         out: List[str] = []
         for t in self._buf:
@@ -76,7 +76,7 @@ class TaskQueue:
         return out
 
     def all_discovered_tasks(self) -> List[str]:
-        """获取所有新发现的任务描述"""
+        """Get all discovered task descriptions"""
         out: List[str] = []
         for t in self._discovered_tasks:
             desc = getattr(t, "description", "") or ""
@@ -84,12 +84,12 @@ class TaskQueue:
         return out
 
 
-    # === 新增：导出为 Planner Prompt 的 HISTORICAL TASKS 文本块 ===
-    # 每行一个任务： "<description> @ <initial_url>"
+    # === New: Export as HISTORICAL TASKS text block for Planner Prompt ===
+    # One task per line: "<description> @ <initial_url>"
     def historical_as_text(self, max_items: Optional[int] = None) -> str:
         items = self.all_tasks()
         if max_items is not None:
-            items = items[-max_items:]  # 最近的若干条（可按需调整策略）
+            items = items[-max_items:]  # Most recent items (strategy can be adjusted as needed)
         lines = []
         for desc in items:
             desc = desc.strip()

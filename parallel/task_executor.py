@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Independent Task Executor - 使用独立driver执行单个任务
+Independent Task Executor - Execute a single task using an independent driver
 """
 
 import time
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from seleniumwire import webdriver  # ✅ 使用selenium-wire以支持网络请求捕获
+from seleniumwire import webdriver  # Use selenium-wire to support network request capture
 from selenium.webdriver.common.by import By
 
 from crawl.sensors import Sensors
@@ -21,55 +21,55 @@ from task.tasks import Task
 
 class IndependentTaskExecutor:
     """
-    独立任务执行器
+    Independent Task Executor
 
-    功能：
-    1. 使用独立driver执行单个任务
-    2. 创建独立的组件链（sensors, bridge, tracer等）
-    3. 记录完整的trace数据到共享store
-    4. 线程安全的新页面发现和缓存
+    Features:
+    1. Execute a single task using an independent driver
+    2. Create an independent component chain (sensors, bridge, tracer, etc.)
+    3. Record complete trace data to shared store
+    4. Thread-safe new page discovery and caching
 
-    关键设计：
-    - 每个任务有独立的组件链
-    - 所有组件共享同一个driver（从池中获取）
-    - 写入共享store（有锁保护）
+    Key design:
+    - Each task has an independent component chain
+    - All components share the same driver (obtained from the pool)
+    - Write to shared store (with lock protection)
     """
 
     def __init__(self, shared_store, client, base_url: str, task_gen=None, content_index=None, debug_session: bool = True):
         """
-        初始化独立任务执行器
+        Initialize the independent task executor
 
         Args:
-            shared_store: 共享的WebAppStore实例（线程安全）
+            shared_store: Shared WebAppStore instance (thread-safe)
             client: OpenAI client
-            base_url: 基础URL
-            task_gen: TaskGenerator实例（用于新页面任务生成）
-            content_index: ContentDedupeIndex实例（用于页面去重）
-            debug_session: 是否启用session状态debug（默认True）
+            base_url: Base URL
+            task_gen: TaskGenerator instance (for new page task generation)
+            content_index: ContentDedupeIndex instance (for page deduplication)
+            debug_session: Whether to enable session state debug (default True)
         """
         self.shared_store = shared_store
         self.client = client
         self.base_url = base_url
         self.task_gen = task_gen
-        self.content_index = content_index  # ✅ 页面去重索引
-        self.debug_session = debug_session  # 🆕 Session debug开关
+        self.content_index = content_index  # Page dedup index
+        self.debug_session = debug_session  # Session debug switch
 
-        # 当前任务上下文（供回调使用）
+        # Current task context (for callbacks)
         self._current_driver: Optional[webdriver.Chrome] = None
         self._current_sensors: Optional[Sensors] = None
         self._current_network_capture: Optional[NetworkCapture] = None
 
     def _capture_session_state(self, driver: webdriver.Chrome, task_id: str, phase: str) -> Dict[str, Any]:
         """
-        捕获driver的当前会话状态（用于debug登录状态丢失问题）
+        Capture the driver's current session state (for debugging login state loss issues)
 
         Args:
-            driver: WebDriver实例
-            task_id: 任务ID
-            phase: 阶段标识（"BEFORE" 或 "AFTER"）
+            driver: WebDriver instance
+            task_id: Task ID
+            phase: Phase identifier ("BEFORE" or "AFTER")
 
         Returns:
-            会话状态字典
+            Session state dictionary
         """
         state = {
             "task_id": task_id,
@@ -84,21 +84,21 @@ class IndependentTaskExecutor:
         }
 
         try:
-            # 获取当前URL
+            # Get current URL
             state["current_url"] = driver.current_url
         except Exception as e:
-            state["error"] = f"获取URL失败: {e}"
+            state["error"] = f"Failed to get URL: {e}"
 
         try:
-            # 获取页面标题
+            # Get page title
             state["page_title"] = driver.title
         except Exception as e:
-            state["error"] = f"获取标题失败: {e}"
+            state["error"] = f"Failed to get title: {e}"
 
         try:
-            # 获取所有cookies
+            # Get all cookies
             cookies = driver.get_cookies()
-            # 只保留关键信息，避免日志过长
+            # Only keep key info to avoid overly long logs
             state["cookies"] = [
                 {
                     "name": c["name"],
@@ -110,46 +110,46 @@ class IndependentTaskExecutor:
                 for c in cookies
             ]
         except Exception as e:
-            state["error"] = f"获取Cookies失败: {e}"
+            state["error"] = f"Failed to get Cookies: {e}"
 
         try:
-            # 获取localStorage
+            # Get localStorage
             local_storage = driver.execute_script("return JSON.stringify(localStorage);")
             state["localStorage"] = local_storage if local_storage else "{}"
         except Exception as e:
-            state["error"] = f"获取localStorage失败: {e}"
+            state["error"] = f"Failed to get localStorage: {e}"
 
         try:
-            # 获取sessionStorage
+            # Get sessionStorage
             session_storage = driver.execute_script("return JSON.stringify(sessionStorage);")
             state["sessionStorage"] = session_storage if session_storage else "{}"
         except Exception as e:
-            state["error"] = f"获取sessionStorage失败: {e}"
+            state["error"] = f"Failed to get sessionStorage: {e}"
 
         return state
 
     def _log_session_state(self, driver: webdriver.Chrome, task_id: str, phase: str, log_file: str = None):
         """
-        记录并打印driver的会话状态
+        Record and print the driver's session state
 
         Args:
-            driver: WebDriver实例
-            task_id: 任务ID
-            phase: 阶段标识（"BEFORE" 或 "AFTER"）
-            log_file: 可选的日志文件路径（如果提供则同时写入文件）
+            driver: WebDriver instance
+            task_id: Task ID
+            phase: Phase identifier ("BEFORE" or "AFTER")
+            log_file: Optional log file path (if provided, also writes to file)
         """
         state = self._capture_session_state(driver, task_id, phase)
 
-        # 生成日志内容
+        # Generate log content
         log_lines = []
         log_lines.append(f"\n{'='*70}")
-        log_lines.append(f"[SESSION-DEBUG] 任务 {task_id} - {phase}")
+        log_lines.append(f"[SESSION-DEBUG] Task {task_id} - {phase}")
         log_lines.append(f"{'='*70}")
-        log_lines.append(f"时间: {state['timestamp']}")
-        log_lines.append(f"当前URL: {state['current_url']}")
-        log_lines.append(f"页面标题: {state['page_title']}")
+        log_lines.append(f"Time: {state['timestamp']}")
+        log_lines.append(f"Current URL: {state['current_url']}")
+        log_lines.append(f"Page title: {state['page_title']}")
 
-        # 检测是否在登录页（简单判断）
+        # Detect if on login page (simple check)
         is_login_page = False
         if state['current_url']:
             url_lower = state['current_url'].lower()
@@ -158,84 +158,84 @@ class IndependentTaskExecutor:
                            'login' in title_lower or 'signin' in title_lower)
 
         if is_login_page:
-            log_lines.append(f"⚠️  WARNING: 可能在登录页面！")
+            log_lines.append(f"WARNING: Possibly on login page!")
 
-        log_lines.append(f"\nCookies ({len(state['cookies'])} 个):")
+        log_lines.append(f"\nCookies ({len(state['cookies'])} items):")
         if state['cookies']:
             for cookie in state['cookies']:
-                # 高亮session相关的cookie
-                marker = "🔑" if any(k in cookie['name'].lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
+                # Highlight session-related cookies
+                marker = "[KEY]" if any(k in cookie['name'].lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
                 log_lines.append(f"  {marker} {cookie['name']}: {cookie['value']}")
                 log_lines.append(f"     domain={cookie['domain']}, path={cookie['path']}")
         else:
-            log_lines.append("  (无cookies)")
+            log_lines.append("  (no cookies)")
 
-        # localStorage和sessionStorage只打印键名（值可能很长）
+        # localStorage and sessionStorage only print key names (values can be very long)
         try:
             ls_data = eval(state['localStorage']) if state['localStorage'] != "{}" else {}
             if ls_data:
-                log_lines.append(f"\nLocalStorage ({len(ls_data)} 项):")
+                log_lines.append(f"\nLocalStorage ({len(ls_data)} items):")
                 for key in ls_data.keys():
-                    marker = "🔑" if any(k in key.lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
+                    marker = "[KEY]" if any(k in key.lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
                     log_lines.append(f"  {marker} {key}")
             else:
-                log_lines.append(f"\nLocalStorage: (空)")
+                log_lines.append(f"\nLocalStorage: (empty)")
         except:
-            log_lines.append(f"\nLocalStorage: (解析失败)")
+            log_lines.append(f"\nLocalStorage: (parse failed)")
 
         try:
             ss_data = eval(state['sessionStorage']) if state['sessionStorage'] != "{}" else {}
             if ss_data:
-                log_lines.append(f"\nSessionStorage ({len(ss_data)} 项):")
+                log_lines.append(f"\nSessionStorage ({len(ss_data)} items):")
                 for key in ss_data.keys():
-                    marker = "🔑" if any(k in key.lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
+                    marker = "[KEY]" if any(k in key.lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
                     log_lines.append(f"  {marker} {key}")
             else:
-                log_lines.append(f"\nSessionStorage: (空)")
+                log_lines.append(f"\nSessionStorage: (empty)")
         except:
-            log_lines.append(f"\nSessionStorage: (解析失败)")
+            log_lines.append(f"\nSessionStorage: (parse failed)")
 
         if state['error']:
-            log_lines.append(f"\n⚠️  错误: {state['error']}")
+            log_lines.append(f"\nError: {state['error']}")
 
         log_lines.append(f"{'='*70}\n")
 
-        # 生成日志文本
+        # Generate log text
         log_text = "\n".join(log_lines)
 
-        # 🆕 写入到任务日志文件（不再输出到stdout，减少主日志噪音）
+        # Write to task log file (no longer output to stdout to reduce main log noise)
         if log_file:
             try:
                 with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(log_text + "\n")
             except Exception as e:
-                print(f"[SESSION-DEBUG] ⚠️ 无法写入日志文件: {e}")
+                print(f"[SESSION-DEBUG] Cannot write to log file: {e}")
 
     def execute_task(self, task: Task, driver: webdriver.Chrome, driver_info: str = "unknown") -> Dict[str, Any]:
         """
-        使用指定driver执行单个任务
+        Execute a single task using the specified driver
 
         Args:
-            task: 要执行的任务
-            driver: 从池中获取的driver
-            driver_info: 🆕 driver信息（"main" 或 "sub_{编号}"），用于截图目录命名
+            task: Task to execute
+            driver: Driver obtained from the pool
+            driver_info: Driver info ("main" or "sub_{number}"), used for screenshot directory naming
 
         Returns:
-            执行结果字典:
+            Execution result dictionary:
             {
                 "task_id": str,
                 "status": "success" | "error",
-                "trace": TaskRunTrace (如果成功),
-                "error": str (如果失败)
+                "trace": TaskRunTrace (if successful),
+                "error": str (if failed)
             }
         """
-        print(f"\n[IndependentExecutor] 开始执行任务: {task.task_id}")
+        print(f"\n[IndependentExecutor] Starting task execution: {task.task_id}")
         print(f"  Driver: {driver_info}")
-        print(f"  描述: {task.description}")
+        print(f"  Description: {task.description}")
         print(f"  URL: {task.initial_url}")
 
         try:
-            # ===== 步骤1: 创建独立的组件链 =====
+            # ===== Step 1: Create independent component chain =====
             sensors = Sensors(driver, use_improved_locator=True)
             actuators = Actuators(sensors)
             bridge = Bridge(
@@ -245,51 +245,51 @@ class IndependentTaskExecutor:
             )
             network_capture = NetworkCapture(driver)
 
-            # 保存当前上下文（供回调使用）
+            # Save current context (for callbacks)
             self._current_driver = driver
             self._current_sensors = sensors
             self._current_network_capture = network_capture
 
-            # ===== 步骤2: 创建独立的Tracer =====
+            # ===== Step 2: Create independent Tracer =====
             tracer = ExecutionTracer(
-                store=self.shared_store,  # ✅ 共享store（有锁保护）
+                store=self.shared_store,  # Shared store (with lock protection)
                 network_capture=network_capture,
-                on_new_page=self._on_new_page_discovered_parallel,  # ✅ 轻量级回调
-                construct_edge=self._construct_edge_parallel,       # ✅ 轻量级回调
+                on_new_page=self._on_new_page_discovered_parallel,  # Lightweight callback
+                construct_edge=self._construct_edge_parallel,       # Lightweight callback
                 debug=False
             )
 
             bridge.set_tracer(
                 tracer=tracer,
-                task_queue=None,  # 并行执行时不需要动态生成任务
+                task_queue=None,  # No need for dynamic task generation during parallel execution
                 store=self.shared_store
             )
 
-            # ===== 步骤3: 加载页面抽象（从缓存）=====
+            # ===== Step 3: Load page abstract (from cache) =====
             driver.get(task.initial_url)
             time.sleep(0.6)
 
-            # 🆕 根据driver信息创建带标识的截图目录
+            # Create screenshot directory with driver info identifier
             photo_dir = self.shared_store.traces_dir / f"{driver_info}_{task.task_id}"
-            photo_dir.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+            photo_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
 
-            # 🆕 创建session debug日志文件路径
+            # Create session debug log file path
             session_log_file = photo_dir / "session_debug.log"
 
-            # 从共享store加载页面抽象和mapping
+            # Load page abstract and mapping from shared store
             page = self.shared_store.get_page(task.initial_url)
             if page and page.abstract_page:
                 sensors.abstract_page = page.abstract_page
-                print(f"[IndependentExecutor] ✓ 从缓存加载页面抽象（{len(page.abstract_page)} 字符）")
+                print(f"[IndependentExecutor] Loaded page abstract from cache ({len(page.abstract_page)} chars)")
 
-                # ===== DEBUG: 检查缓存中的映射 =====
-                print(f"[IndependentExecutor] [DEBUG] 缓存中的映射信息:")
-                print(f"  - actions_mapping: {len(page.actions_mapping) if page.actions_mapping else 0} 个")
-                print(f"  - event_mapping: {len(page.event_mapping) if page.event_mapping else 0} 个")
+                # ===== DEBUG: Check cached mappings =====
+                print(f"[IndependentExecutor] [DEBUG] Cached mapping info:")
+                print(f"  - actions_mapping: {len(page.actions_mapping) if page.actions_mapping else 0} items")
+                print(f"  - event_mapping: {len(page.event_mapping) if page.event_mapping else 0} items")
                 if page.event_mapping:
-                    print(f"  - event_mapping keys: {list(page.event_mapping.keys())[:5]}...")  # 显示前5个
+                    print(f"  - event_mapping keys: {list(page.event_mapping.keys())[:5]}...")  # Show first 5
 
-                # 恢复actions_mapping
+                # Restore actions_mapping
                 if page.actions_mapping:
                     sensors.actions_mapping.clear()
                     for action_id, locators_info in page.actions_mapping.items():
@@ -297,63 +297,63 @@ class IndependentTaskExecutor:
                             int(action_id),
                             locators_info
                         )
-                    print(f"[IndependentExecutor] ✓ 恢复了 {len(page.actions_mapping)} 个元素映射")
+                    print(f"[IndependentExecutor] Restored {len(page.actions_mapping)} element mappings")
                 else:
-                    print(f"[IndependentExecutor] ⚠️ 警告：页面缓存中没有 actions_mapping")
+                    print(f"[IndependentExecutor] Warning: No actions_mapping in page cache")
 
-                # 🆕 恢复event_mapping（修复bug：之前缺少这部分导致TRIGGER命令失败）
+                # Restore event_mapping (fix bug: previously missing this part caused TRIGGER command failure)
                 if page.event_mapping:
                     sensors.event_mapping.clear()
                     for event_id, event_info in page.event_mapping.items():
                         sensors.event_mapping.mapping[int(event_id)] = event_info
-                    # 更新id_counter为最大ID+1
+                    # Update id_counter to max ID + 1
                     max_event_id = max(int(k) for k in page.event_mapping.keys())
                     sensors.event_mapping.id_counter = max_event_id + 1
-                    print(f"[IndependentExecutor] ✓ 恢复了 {len(page.event_mapping)} 个事件映射")
-                    print(f"[IndependentExecutor] [DEBUG] 恢复的事件ID: {list(sensors.event_mapping.mapping.keys())[:5]}...")
+                    print(f"[IndependentExecutor] Restored {len(page.event_mapping)} event mappings")
+                    print(f"[IndependentExecutor] [DEBUG] Restored event IDs: {list(sensors.event_mapping.mapping.keys())[:5]}...")
                 else:
-                    print(f"[IndependentExecutor] ⚠️ 警告：页面缓存中没有 event_mapping")
+                    print(f"[IndependentExecutor] Warning: No event_mapping in page cache")
 
-                # ===== DEBUG: 验证恢复后的状态 =====
-                print(f"[IndependentExecutor] [DEBUG] 恢复后的sensors状态:")
-                print(f"  - sensors.actions_mapping: {len(sensors.actions_mapping.mapping)} 个")
-                print(f"  - sensors.event_mapping: {len(sensors.event_mapping.mapping)} 个")
+                # ===== DEBUG: Verify restored state =====
+                print(f"[IndependentExecutor] [DEBUG] Post-restoration sensors state:")
+                print(f"  - sensors.actions_mapping: {len(sensors.actions_mapping.mapping)} items")
+                print(f"  - sensors.event_mapping: {len(sensors.event_mapping.mapping)} items")
             else:
-                # 兜底：重新扫描
-                print(f"[IndependentExecutor] ⚠️ 未找到缓存，重新扫描")
+                # Fallback: rescan
+                print(f"[IndependentExecutor] Cache not found, rescanning")
                 sensors.update_abstract_page()
 
-                # 🔍 DEBUG: 记录扫描日志（写入文件）
+                # DEBUG: Record scan log (write to file)
                 if hasattr(sensors, 'debug_scan_log'):
                     debug_log_path = photo_dir / "scan_debug.log"
                     with open(debug_log_path, 'w', encoding='utf-8') as f:
                         f.write("\n".join(sensors.debug_scan_log))
-                    print(f"[IndependentExecutor] 🔍 扫描debug日志已保存: {debug_log_path}")
+                    print(f"[IndependentExecutor] Scan debug log saved: {debug_log_path}")
 
-            # 🆕 SESSION DEBUG: 记录任务执行前的会话状态
+            # SESSION DEBUG: Record session state before task execution
             if self.debug_session:
                 self._log_session_state(driver, task.task_id, "BEFORE", log_file=str(session_log_file))
 
-            # ===== 步骤4: 启动轨迹记录 =====
+            # ===== Step 4: Start trace recording =====
             tracer.start_task(task.task_id, task.description)
 
-            # ===== 步骤5: 执行任务 =====
+            # ===== Step 5: Execute task =====
             network_capture.clear_requests()
 
-            # photo_dir 已在步骤3提前定义
+            # photo_dir already defined in Step 3
             bridge.run_task(task, photo_dir=photo_dir, logging_in=False)
 
-            # ===== 步骤6: 结束轨迹并保存 =====
+            # ===== Step 6: End trace and save =====
             trace = tracer.end_task()
             if trace:
-                self.shared_store.save_trace(trace)  # ✅ 线程安全
-                print(f"[IndependentExecutor] ✓ Trace已保存")
+                self.shared_store.save_trace(trace)  # Thread-safe
+                print(f"[IndependentExecutor] Trace saved")
 
-            # 🆕 SESSION DEBUG: 记录任务执行后的会话状态
+            # SESSION DEBUG: Record session state after task execution
             if self.debug_session:
                 self._log_session_state(driver, task.task_id, "AFTER", log_file=str(session_log_file))
 
-            print(f"[IndependentExecutor] ✅ 任务完成: {task.task_id}\n")
+            print(f"[IndependentExecutor] Task completed: {task.task_id}\n")
 
             return {
                 "task_id": task.task_id,
@@ -362,7 +362,7 @@ class IndependentTaskExecutor:
             }
 
         except Exception as e:
-            print(f"[IndependentExecutor] ✗ 任务失败: {task.task_id} - {e}")
+            print(f"[IndependentExecutor] Task failed: {task.task_id} - {e}")
             import traceback
             traceback.print_exc()
 
@@ -373,27 +373,27 @@ class IndependentTaskExecutor:
             }
 
         finally:
-            # 清理上下文
+            # Clean up context
             self._current_driver = None
             self._current_sensors = None
             self._current_network_capture = None
 
     def _on_new_page_discovered_parallel(self, url: str):
         """
-        并行执行时的新页面回调
+        New page callback during parallel execution
 
-        ✅ 内容去重检查（与串行模式一致）
-        ✅ 缓存页面信息（线程安全）
-        ✅ 生成任务（与串行模式一致）
+        Content dedup check (consistent with serial mode)
+        Cache page info (thread-safe)
+        Generate tasks (consistent with serial mode)
         """
-        # 检查是否已被处理（避免重复）
+        # Check if already processed (avoid duplication)
         if self.shared_store.has_page(url):
             return
 
-        print(f"[ParallelNewPage] 发现新页面: {url}")
+        print(f"[ParallelNewPage] New page discovered: {url}")
 
         try:
-            # 等待页面稳定
+            # Wait for page to stabilize
             time.sleep(0.6)
 
             driver = self._current_driver
@@ -401,10 +401,10 @@ class IndependentTaskExecutor:
             network_capture = self._current_network_capture
 
             if not all([driver, sensors, network_capture]):
-                print(f"[ParallelNewPage] ✗ 上下文不完整，跳过")
+                print(f"[ParallelNewPage] Context incomplete, skipping")
                 return
 
-            # ✅ 修复：加入内容去重检查（与串行模式保持一致）
+            # Fix: Add content dedup check (consistent with serial mode)
             if self.content_index:
                 try:
                     html_src = driver.page_source
@@ -412,18 +412,18 @@ class IndependentTaskExecutor:
                     is_new = bool(dedup_result.get("is_new", True))
 
                     if not is_new:
-                        # 重复页面：跳过处理
+                        # Duplicate page: skip processing
                         cluster_id = dedup_result.get("cluster_id")
                         repr_url = dedup_result.get("repr_url")
-                        print(f"[ParallelNewPage] 页面内容重复，跳过: {url} (cluster: {cluster_id}, repr: {repr_url})")
+                        print(f"[ParallelNewPage] Duplicate page content, skipping: {url} (cluster: {cluster_id}, repr: {repr_url})")
                         return
                 except Exception as e:
-                    print(f"[ParallelNewPage] ⚠️ 去重检查失败，继续处理: {e}")
-                    # 去重失败不影响页面处理
+                    print(f"[ParallelNewPage] Dedup check failed, continuing: {e}")
+                    # Dedup failure does not affect page processing
             else:
-                print(f"[ParallelNewPage] ⚠️ content_index未提供，跳过去重检查")
+                print(f"[ParallelNewPage] content_index not provided, skipping dedup check")
 
-            # 1. 捕获网络请求
+            # 1. Capture network requests
             captured_requests = network_capture.capture_current(url, exclude_static=True)
             network_requests = [
                 NetworkRequest(
@@ -439,7 +439,7 @@ class IndependentTaskExecutor:
                 for req in captured_requests
             ]
 
-            # 2. 收集页面链接
+            # 2. Collect page links
             outgoing_links = []
             try:
                 elements = driver.find_elements(By.TAG_NAME, 'a')
@@ -447,16 +447,16 @@ class IndependentTaskExecutor:
                     href = elem.get_attribute('href')
                     if href and '127.0.0.1' in href:
                         outgoing_links.append(href.strip())
-                outgoing_links = list(set(outgoing_links))  # 去重
+                outgoing_links = list(set(outgoing_links))  # Deduplicate
             except Exception as e:
-                print(f"[ParallelNewPage] 收集链接失败: {e}")
+                print(f"[ParallelNewPage] Link collection failed: {e}")
 
-            # 3. 重新扫描当前页面获取最新的DOM结构（修复：与串行模式保持一致）
+            # 3. Rescan current page for latest DOM structure (fix: consistent with serial mode)
             sensors.update_abstract_page()
             abstract = sensors.get_abstract_page()
-            print(f"[ParallelNewPage] ✓ 已重新扫描页面获取最新DOM")
+            print(f"[ParallelNewPage] Rescanned page for latest DOM")
 
-            # 4. 保存到共享store（线程安全）
+            # 4. Save to shared store (thread-safe)
             page_info = PageInfo(
                 url=url,
                 title=driver.title.strip() if driver.title else "",
@@ -464,15 +464,15 @@ class IndependentTaskExecutor:
                 outgoing_links=outgoing_links,
                 network_requests=network_requests,
                 actions_mapping=dict(sensors.actions_mapping.mapping),
-                event_mapping=dict(sensors.event_mapping.mapping)  # 🆕 保存事件映射
+                event_mapping=dict(sensors.event_mapping.mapping)  # Save event mapping
             )
 
-            # ✅ Store有锁保护，线程安全
+            # Store has lock protection, thread-safe
             self.shared_store.add_page(page_info, persist=True)
 
-            print(f"[ParallelNewPage] ✓ 页面已缓存: {url}")
+            print(f"[ParallelNewPage] Page cached: {url}")
 
-            # ✅ 修复：生成任务（与串行模式保持一致）
+            # Fix: Generate tasks (consistent with serial mode)
             if self.task_gen:
                 page = self.shared_store.get_page(url)
                 if page:
@@ -481,23 +481,23 @@ class IndependentTaskExecutor:
                     page.description = f"Title: {title}\nDescription: {reasoning}"
                     page.logic_tasks = task_descriptions
                     self.shared_store.upsert_page(page, merge_outgoing_links=False, merge_requests=False, persist=True)
-                    print(f"[ParallelNewPage] ✓ 生成了 {len(task_descriptions)} 个任务")
+                    print(f"[ParallelNewPage] Generated {len(task_descriptions)} tasks")
 
         except Exception as e:
-            print(f"[ParallelNewPage] ✗ 处理失败: {url} - {e}")
+            print(f"[ParallelNewPage] Processing failed: {url} - {e}")
 
     def _construct_edge_parallel(self, url: str):
         """
-        并行执行时的边构建回调（轻量级版本）
+        Edge construction callback during parallel execution (lightweight version)
 
-        ✅ 保留：收集链接并创建"discovered"边
+        Retained: collect links and create "discovered" edges
         """
         try:
             driver = self._current_driver
             if not driver:
                 return
 
-            # 收集链接
+            # Collect links
             links = []
             try:
                 elements = driver.find_elements(By.TAG_NAME, 'a')
@@ -508,17 +508,17 @@ class IndependentTaskExecutor:
             except:
                 pass
 
-            # 创建"发现"边（线程安全）
+            # Create "discovered" edges (thread-safe)
             for link in links:
                 if not self.shared_store.has_edge(url, link):
                     edge = Edge(
                         from_url=url,
                         to_url=link,
-                        via_action_id=-1,  # -1表示未实际点击
+                        via_action_id=-1,  # -1 means not actually clicked
                         via_repr="link",
                         jump_kind="discovered",
                     )
-                    self.shared_store.add_edge(edge)  # ✅ 有锁保护
+                    self.shared_store.add_edge(edge)  # Has lock protection
 
         except Exception as e:
-            print(f"[ParallelEdge] 构建边失败: {url} - {e}")
+            print(f"[ParallelEdge] Edge construction failed: {url} - {e}")

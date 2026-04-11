@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Parallel Task Scheduler - 并行任务调度器
+Parallel Task Scheduler
 """
 
 import time
@@ -14,17 +14,18 @@ from typing import Dict, List, Set, Optional, Any
 from task.tasks import Task
 from parallel.driver_pool import DriverPool
 from parallel.task_executor import IndependentTaskExecutor
+from utils.token_tracker import tracker
 
 
 class ParallelTaskScheduler:
     """
-    并行任务调度器
+    Parallel Task Scheduler
 
-    核心功能：
-    1. 规划线程（生产者）：调用LLM规划任务并入队
-    2. 执行线程池（消费者）：从队列取任务并行执行
-    3. UPDATE_PAGES同步点：暂停规划，等待执行完成
-    4. 智能结束条件：检查是否还有未执行的页面/任务
+    Core features:
+    1. Planning thread (producer): calls LLM to plan tasks and enqueue
+    2. Execution thread pool (consumer): takes tasks from queue and executes in parallel
+    3. UPDATE_PAGES synchronization point: pauses planning, waits for execution to complete
+    4. Smart termination condition: checks if there are unexecuted pages/tasks
     """
 
     def __init__(self,
@@ -35,15 +36,15 @@ class ParallelTaskScheduler:
                  max_workers: int = 10,
                  use_main_driver: bool = True):
         """
-        初始化并行任务调度器
+        Initialize the parallel task scheduler
 
         Args:
-            crawler: Crawler实例（用于获取store等）
-            task_planning_agent: TaskPlanningAgent实例（用于规划）
-            account_manager: AccountManager实例
+            crawler: Crawler instance (for accessing store, etc.)
+            task_planning_agent: TaskPlanningAgent instance (for planning)
+            account_manager: AccountManager instance
             client: OpenAI client
-            max_workers: 最大并发worker数（默认10）
-            use_main_driver: 是否让主driver也参与任务执行（默认True，保持session活跃）
+            max_workers: Maximum concurrent workers (default 10)
+            use_main_driver: Whether the main driver participates in task execution (default True, keeps session active)
         """
         self.crawler = crawler
         self.task_planning_agent = task_planning_agent
@@ -52,66 +53,66 @@ class ParallelTaskScheduler:
         self.max_workers = max_workers
         self.use_main_driver = use_main_driver
 
-        # Driver池
+        # Driver pool
         self.driver_pool: Optional[DriverPool] = None
 
-        # 🆕 保存主driver引用（用于传给DriverPool）
+        # Save main driver reference (for passing to DriverPool)
         self.main_driver = crawler.driver if use_main_driver else None
 
-        # 任务队列
+        # Task queue
         self.task_queue: Queue = Queue()
 
-        # 执行中的任务（task_id -> Future）
+        # Executing tasks (task_id -> Future)
         self.executing_tasks: Dict[str, Future] = {}
-        self.executing_lock = threading.Lock()  # 保护executing_tasks
+        self.executing_lock = threading.Lock()  # Protect executing_tasks
 
-        # 状态控制
+        # State control
         self.planning_active = True
         self.planning_pause = threading.Event()
-        self.planning_pause.set()  # 初始不暂停
+        self.planning_pause.set()  # Initially not paused
 
-        # 🆕 确认等待控制（用于LLM返回FINISH后的确认）
-        self.wait_confirmation = threading.Event()  # 等待主线程确认是否有新页面
-        self.wait_confirmation.clear()  # 初始不等待确认
-        self.should_continue = False  # 主线程告诉规划线程是否继续（True=有新页面，继续；False=无新页面，退出）
+        # Confirmation wait control (for confirmation after LLM returns FINISH)
+        self.wait_confirmation = threading.Event()  # Wait for main thread to confirm if there are new pages
+        self.wait_confirmation.clear()  # Initially not waiting for confirmation
+        self.should_continue = False  # Main thread tells planning thread whether to continue (True=new pages, continue; False=no new pages, exit)
 
-        # 🆕 追踪是否是"重新询问"（FINISH后发现未执行页面，再问一次）
-        self.is_retry_after_finish = False  # 标记当前迭代是否是FINISH后的重试
+        # Track whether this is a "re-ask" (FINISH followed by discovering unexecuted pages, ask again)
+        self.is_retry_after_finish = False  # Flag whether current iteration is a retry after FINISH
 
-        # 任务规划记录
-        self.planned_tasks: List[Dict[str, Any]] = []  # 存储所有规划的任务
-        self.tasks_lock = threading.Lock()  # 保护planned_tasks
+        # Task planning records
+        self.planned_tasks: List[Dict[str, Any]] = []  # Store all planned tasks
+        self.tasks_lock = threading.Lock()  # Protect planned_tasks
         self.tasks_json_path = Path(crawler.root_dir) / "planned_tasks.json"
 
         if use_main_driver:
-            print(f"[ParallelScheduler] 初始化完成，max_workers={max_workers} (包含1个主driver + {max_workers-1}个子driver)")
+            print(f"[ParallelScheduler] Initialization complete, max_workers={max_workers} (includes 1 main driver + {max_workers-1} sub-drivers)")
         else:
-            print(f"[ParallelScheduler] 初始化完成，max_workers={max_workers} (全部为子driver)")
+            print(f"[ParallelScheduler] Initialization complete, max_workers={max_workers} (all sub-drivers)")
 
     def run(self, max_iterations: int = 100, target_domain=None):
         """
-        主循环：并行的规划和执行
+        Main loop: parallel planning and execution
 
-        流程：
-        1. 创建driver池
-        2. 启动规划线程（生产者）
-        3. 执行循环（消费者）
-        4. 清理资源
+        Flow:
+        1. Create driver pool
+        2. Start planning thread (producer)
+        3. Execution loop (consumer)
+        4. Clean up resources
 
         Args:
-            max_iterations: 最大规划迭代次数（防止无限循环）
+            max_iterations: Maximum planning iterations (prevents infinite loop)
         """
         print(f"\n{'='*70}")
-        print(f"[ParallelScheduler] 开始并行任务调度")
+        print(f"[ParallelScheduler] Starting parallel task scheduling")
         print(f"{'='*70}\n")
 
         start_time = time.time()
 
         try:
-            # ===== 步骤1: 创建driver池 =====
+            # ===== Step 1: Create driver pool =====
             self._create_driver_pool(target_domain)
 
-            # ===== 步骤2: 启动规划线程 =====
+            # ===== Step 2: Start planning thread =====
             planning_thread = threading.Thread(
                 target=self._planning_loop,
                 args=(max_iterations,),
@@ -119,58 +120,58 @@ class ParallelTaskScheduler:
             )
             planning_thread.start()
 
-            # ===== 步骤3: 执行循环 =====
+            # ===== Step 3: Execution loop =====
             with ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="Worker") as executor:
                 while True:
-                    # 🔧 修复：额外的安全检查 - 如果规划线程已死且队列为空，强制退出
+                    # Fix: Extra safety check - if planning thread is dead and queue is empty, force exit
                     if not planning_thread.is_alive() and self.task_queue.empty():
                         with self.executing_lock:
                             has_executing_tasks = len(self.executing_tasks) > 0
                         if not has_executing_tasks:
-                            print(f"[ParallelScheduler] ⚠️ 规划线程已结束且无待执行任务，强制退出执行循环")
+                            print(f"[ParallelScheduler] Planning thread ended and no pending tasks, force exiting execution loop")
                             break
 
-                    # 检查结束条件
+                    # Check termination condition
                     if self._should_terminate():
-                        print(f"[ParallelScheduler] 满足结束条件，停止执行循环")
+                        print(f"[ParallelScheduler] Termination condition met, stopping execution loop")
                         break
 
-                    # 从队列取任务
+                    # Get task from queue
                     try:
                         task = self.task_queue.get(timeout=1)
                     except Empty:
-                        # 没有任务，继续等待
+                        # No task, continue waiting
                         continue
 
-                    # 提交执行
+                    # Submit for execution
                     future = executor.submit(self._execute_task_wrapper, task)
 
                     with self.executing_lock:
                         self.executing_tasks[task.task_id] = future
 
-            # ===== 步骤4: 等待规划线程结束 =====
+            # ===== Step 4: Wait for planning thread to end =====
             planning_thread.join(timeout=10)
 
             if planning_thread.is_alive():
-                print(f"[ParallelScheduler] ⚠️ 规划线程未正常结束")
+                print(f"[ParallelScheduler] Planning thread did not terminate normally")
 
-            # ===== 步骤5: 确保所有任务完成 =====
+            # ===== Step 5: Ensure all tasks are complete =====
             self._wait_all_tasks()
 
         finally:
-            # ===== 步骤6: 不清理driver池（Phase 4-5攻击执行还需要用）=====
-            # 🔧 修复：Phase 3的drivers会被传递给Phase 4-5，不能在这里关闭
-            # 清理工作由 decision_agent 在整个流程结束后统一处理
+            # ===== Step 6: Do not clean up driver pool (Phase 4-5 attack execution still needs them) =====
+            # Fix: Phase 3 drivers will be passed to Phase 4-5, cannot close here
+            # Cleanup is handled uniformly by decision_agent after the entire flow ends
             if self.driver_pool:
-                print(f"[ParallelScheduler] Driver池保持打开（将被传递给Phase 4-5）")
-                print(f"[ParallelScheduler] 清理工作将由decision_agent统一处理")
+                print(f"[ParallelScheduler] Driver pool kept open (will be passed to Phase 4-5)")
+                print(f"[ParallelScheduler] Cleanup will be handled uniformly by decision_agent")
 
         elapsed = time.time() - start_time
 
         print(f"\n{'='*70}")
-        print(f"[ParallelScheduler] 并行调度完成")
-        print(f"[ParallelScheduler] 总耗时: {elapsed:.1f}秒")
-        print(f"[ParallelScheduler] 执行的页面数: {len(self.task_planning_agent.state.executed_pages)}")
+        print(f"[ParallelScheduler] Parallel scheduling complete")
+        print(f"[ParallelScheduler] Total time: {elapsed:.1f} seconds")
+        print(f"[ParallelScheduler] Executed pages: {len(self.task_planning_agent.state.executed_pages)}")
         print(f"{'='*70}\n")
 
         return {
@@ -179,8 +180,8 @@ class ParallelTaskScheduler:
         }
 
     def _create_driver_pool(self, target_domain):
-        """创建driver池"""
-        print(f"[ParallelScheduler] 创建driver池...")
+        """Create driver pool"""
+        print(f"[ParallelScheduler] Creating driver pool...")
 
         self.driver_pool = DriverPool(size=self.max_workers)
         self.driver_pool.create(
@@ -191,130 +192,130 @@ class ParallelTaskScheduler:
             target_domain=target_domain
         )
 
-        print(f"[ParallelScheduler] ✓ Driver池创建完成\n")
+        print(f"[ParallelScheduler] Driver pool creation complete\n")
 
     def _planning_loop(self, max_iterations: int):
         """
-        规划循环（在独立线程中运行）
+        Planning loop (runs in a separate thread)
 
-        🆕 修复逻辑：
-        - LLM返回FINISH后，不立即退出，而是等待主线程确认
-        - 主线程会检查是否有新页面（任务执行过程中发现的）
-        - 如果有新页面：用新图再问LLM
-        - 如果没有新页面：真正退出
+        Fixed logic:
+        - After LLM returns FINISH, don't exit immediately; wait for main thread confirmation
+        - Main thread checks if there are new pages (discovered during task execution)
+        - If new pages exist: ask LLM again with the new graph
+        - If no new pages: actually exit
 
         Args:
-            max_iterations: 最大迭代次数
+            max_iterations: Maximum number of iterations
         """
-        print(f"[PlanningThread] 规划线程启动\n")
+        print(f"[PlanningThread] Planning thread started\n")
 
         iteration = 0
-        need_confirmation = False  # 是否需要等待主线程确认
+        need_confirmation = False  # Whether to wait for main thread confirmation
 
-        # ✅ 修复：即使planning_active=False，如果need_confirmation=True也要继续循环（等待确认）
+        # Fix: Even if planning_active=False, continue loop if need_confirmation=True (waiting for confirmation)
         while (self.planning_active or need_confirmation) and iteration < max_iterations:
-            # 如果需要等待确认（LLM刚返回了FINISH）
+            # If waiting for confirmation (LLM just returned FINISH)
             if need_confirmation:
-                print(f"[PlanningThread] 等待主线程确认是否有新页面...")
-                self.wait_confirmation.wait()  # 🔑 无超时，无限期等待主线程通知
+                print(f"[PlanningThread] Waiting for main thread to confirm if there are new pages...")
+                self.wait_confirmation.wait()  # No timeout, wait indefinitely for main thread notification
 
                 if self.should_continue:
-                    # 主线程说：有新页面，继续规划
-                    print(f"[PlanningThread] ✓ 主线程确认有新页面，继续规划")
+                    # Main thread says: new pages exist, continue planning
+                    print(f"[PlanningThread] Main thread confirmed new pages, continuing planning")
                     need_confirmation = False
-                    self.planning_active = True  # ✅ 恢复活跃状态
-                    self.wait_confirmation.clear()  # 重置事件
-                    # 继续循环，用新图再问LLM
+                    self.planning_active = True  # Restore active state
+                    self.wait_confirmation.clear()  # Reset event
+                    # Continue loop, ask LLM again with new graph
                 else:
-                    # 主线程说：没有新页面，可以退出
-                    print(f"[PlanningThread] ✓ 主线程确认无新页面，退出")
+                    # Main thread says: no new pages, can exit
+                    print(f"[PlanningThread] Main thread confirmed no new pages, exiting")
                     break
 
             iteration += 1
 
-            # 等待（如果被暂停，如UPDATE_PAGES同步点）
+            # Wait (if paused, e.g., UPDATE_PAGES synchronization point)
             self.planning_pause.wait()
 
-            print(f"\n[PlanningThread] ===== 迭代 {iteration} =====")
+            print(f"\n[PlanningThread] ===== Iteration {iteration} =====")
 
-            # 调用LLM规划
+            # Call LLM for planning
             try:
                 action_type, action_data = self.task_planning_agent._plan_next_action()
 
-                # 处理不同的action
+                # Handle different actions
                 if action_type == "EXECUTE_TASKS":
-                    self.is_retry_after_finish = False  # 重置重试标记（因为LLM确实执行了任务）
+                    self.is_retry_after_finish = False  # Reset retry flag (LLM actually executed tasks)
                     self._handle_execute_tasks(action_data)
 
                 elif action_type == "UPDATE_PAGES":
-                    # ✅ 不重置重试标记！UPDATE_PAGES后如果LLM再次FINISH，应该算作"第二次FINISH"
+                    # Don't reset retry flag! If LLM returns FINISH again after UPDATE_PAGES, it should count as "second FINISH"
                     self._handle_update_pages(action_data)
 
                 elif action_type == "FINISH":
-                    # ✅ 检查是否是"重试后的FINISH"
+                    # Check if this is a "FINISH after retry"
                     if self.is_retry_after_finish:
-                        # 第二次FINISH了，LLM拒绝执行，直接退出
-                        print(f"[PlanningThread] LLM重试后仍返回FINISH，直接退出")
+                        # Second FINISH, LLM refuses to execute, exit directly
+                        print(f"[PlanningThread] LLM still returned FINISH after retry, exiting directly")
                         self.planning_active = False
-                        break  # 直接退出循环，不需要等主线程确认
+                        break  # Exit loop directly, no need for main thread confirmation
 
-                    # 第一次FINISH，等待任务完成后让主线程检查
-                    print(f"[PlanningThread] LLM返回FINISH，等待所有任务执行完成...")
+                    # First FINISH, wait for tasks to complete then let main thread check
+                    print(f"[PlanningThread] LLM returned FINISH, waiting for all tasks to complete...")
                     self._wait_all_tasks()
 
-                    print(f"[PlanningThread] 进入等待确认状态，由主线程检查是否继续")
+                    print(f"[PlanningThread] Entering confirmation wait state, main thread will check whether to continue")
                     need_confirmation = True
-                    self.planning_active = False  # ✅ 设置False让主线程能进入检查，但循环因need_confirmation=True继续
+                    self.planning_active = False  # Set False so main thread can enter check, but loop continues due to need_confirmation=True
 
                 else:
-                    print(f"[PlanningThread] ⚠️ 未知action类型: {action_type}")
+                    print(f"[PlanningThread] Unknown action type: {action_type}")
 
             except Exception as e:
-                print(f"[PlanningThread] ✗ 规划失败: {e}")
+                print(f"[PlanningThread] Planning failed: {e}")
                 import traceback
                 traceback.print_exc()
 
-        # 🔧 修复：规划线程退出前，强制设置 planning_active = False
-        # 避免因达到 max_iterations 退出时，planning_active 还是 True，导致主线程永远等待
+        # Fix: Force set planning_active = False before planning thread exits
+        # Avoid main thread waiting forever if exiting due to max_iterations while planning_active is still True
         self.planning_active = False
-        print(f"\n[PlanningThread] 规划线程结束（迭代{iteration}次）\n")
+        print(f"\n[PlanningThread] Planning thread ended ({iteration} iterations)\n")
 
     def _handle_execute_tasks(self, action_data):
         """
-        处理EXECUTE_TASKS操作
+        Handle EXECUTE_TASKS action
 
         Args:
-            action_data: ExecuteTasksAction对象
+            action_data: ExecuteTasksAction object
         """
         page_url = action_data.page_url
         tasks = action_data.tasks
 
-        # ✅ 修复：检查 page_url
+        # Fix: Check page_url
         if not page_url:
-            print(f"[PlanningThread] ⚠️ Empty page_url, skipping")
+            print(f"[PlanningThread] Empty page_url, skipping")
             return
 
-        # ✅ 修复：即使任务列表为空，也要标记页面为已执行（避免死循环）
+        # Fix: Even if task list is empty, mark page as executed (avoid infinite loop)
         if not tasks:
             print(f"[PlanningThread] No tasks to execute for {page_url}, but marking as executed")
             self.task_planning_agent.state.executed_pages.add(page_url)
             return
 
         print(f"[PlanningThread] EXECUTE_TASKS: {page_url}")
-        print(f"[PlanningThread] 任务数量: {len(tasks)}")
+        print(f"[PlanningThread] Task count: {len(tasks)}")
 
-        # ✅ 标记页面为已执行（同步到task_planning_agent的状态）
+        # Mark page as executed (sync to task_planning_agent's state)
         self.task_planning_agent.state.executed_pages.add(page_url)
 
-        # ✅ 修复：更新Store中的页面任务（与串行模式保持一致）
-        # 这样导出任务图时，能够反映Planning Agent实际规划的任务
+        # Fix: Update page tasks in Store (consistent with serial mode)
+        # This way the exported task graph reflects the tasks actually planned by Planning Agent
         page = self.crawler.store.get_page(page_url)
         if page:
-            print(f"[PlanningThread] 更新页面任务: {len(page.logic_tasks)} -> {len(tasks)}")
+            print(f"[PlanningThread] Updating page tasks: {len(page.logic_tasks)} -> {len(tasks)}")
             page.logic_tasks = tasks
             self.crawler.store.upsert_page(page, merge_outgoing_links=False, merge_requests=False, persist=True)
 
-        # 创建任务对象并入队
+        # Create task objects and enqueue
         task_list = []
         for task_desc in tasks:
             task_id = self.task_planning_agent.task_queue.next_task_id()
@@ -325,9 +326,9 @@ class ParallelTaskScheduler:
             )
 
             self.task_queue.put(task)
-            print(f"[PlanningThread] 任务入队: {task_id} - {task_desc}")
+            print(f"[PlanningThread] Task enqueued: {task_id} - {task_desc}")
 
-            # 记录到planned_tasks
+            # Record to planned_tasks
             task_list.append({
                 "task_id": task_id,
                 "description": task_desc,
@@ -335,78 +336,78 @@ class ParallelTaskScheduler:
                 "status": "queued"
             })
 
-        # 保存到JSON文件（线程安全）
+        # Save to JSON file (thread-safe)
         with self.tasks_lock:
             self.planned_tasks.extend(task_list)
             self._save_tasks_to_json()
 
     def _handle_update_pages(self, action_data):
         """
-        处理UPDATE_PAGES操作（同步点）
+        Handle UPDATE_PAGES action (synchronization point)
 
-        流程：
-        1. 暂停规划
-        2. 等待所有执行中的任务完成
-        3. 执行UPDATE操作
-        4. 恢复规划
+        Flow:
+        1. Pause planning
+        2. Wait for all executing tasks to complete
+        3. Execute UPDATE operation
+        4. Resume planning
 
         Args:
-            action_data: UpdatePagesAction对象
+            action_data: UpdatePagesAction object
         """
         page_urls = action_data.page_urls
         reason = action_data.reason
 
-        print(f"\n[PlanningThread] *** UPDATE_PAGES同步点 ***")
-        print(f"[PlanningThread] 原因: {reason}")
-        print(f"[PlanningThread] 页面数: {len(page_urls)}")
+        print(f"\n[PlanningThread] *** UPDATE_PAGES synchronization point ***")
+        print(f"[PlanningThread] Reason: {reason}")
+        print(f"[PlanningThread] Page count: {len(page_urls)}")
 
-        # 1. 暂停规划
+        # 1. Pause planning
         self.planning_pause.clear()
-        print(f"[PlanningThread] 已暂停规划")
+        print(f"[PlanningThread] Planning paused")
 
-        # 2. 等待所有执行中的任务完成
+        # 2. Wait for all executing tasks to complete
         self._wait_all_tasks()
 
-        # 3. 执行UPDATE操作（使用主driver或独立driver）
+        # 3. Execute UPDATE operation (using main driver or independent driver)
         try:
             self._update_pages(page_urls)
         except Exception as e:
-            print(f"[PlanningThread] ✗ UPDATE失败: {e}")
+            print(f"[PlanningThread] UPDATE failed: {e}")
 
-        # 4. 恢复规划
+        # 4. Resume planning
         self.planning_pause.set()
-        print(f"[PlanningThread] 已恢复规划\n")
+        print(f"[PlanningThread] Planning resumed\n")
 
     def _update_pages(self, page_urls: List[str]):
         """
-        更新页面（重新扫描页面抽象并重新生成任务）
+        Update pages (rescan page abstract and regenerate tasks)
 
-        完整流程：
-        1. 重新访问页面
-        2. 重新收集页面信息（DOM、请求等）
-        3. 重新生成任务（调用LLM）
-        4. 标记状态，允许LLM重新规划
+        Full flow:
+        1. Revisit the page
+        2. Recollect page information (DOM, requests, etc.)
+        3. Regenerate tasks (call LLM)
+        4. Mark state, allow LLM to re-plan
 
         Args:
-            page_urls: 要更新的页面URL列表
+            page_urls: List of page URLs to update
         """
-        print(f"[UpdatePages] 开始更新 {len(page_urls)} 个页面")
+        print(f"[UpdatePages] Starting update of {len(page_urls)} pages")
 
-        # 使用主driver进行更新（避免并发问题）
+        # Use main driver for updates (avoid concurrency issues)
         driver = self.crawler.driver
 
         for i, url in enumerate(page_urls, 1):
-            print(f"[UpdatePages] [{i}/{len(page_urls)}] 更新页面: {url}")
+            print(f"[UpdatePages] [{i}/{len(page_urls)}] Updating page: {url}")
 
             try:
-                # 1. 导航到页面
+                # 1. Navigate to the page
                 driver.get(url)
                 time.sleep(0.6)
 
-                # 2. 重新收集页面信息（和串行模式一致）
+                # 2. Recollect page information (consistent with serial mode)
                 self.crawler._collect_page_info(url)
 
-                # 3. 重新生成任务（调用LLM）
+                # 3. Regenerate tasks (call LLM)
                 page = self.crawler.store.get_page(url)
                 if page:
                     title = (driver.title or "").strip()
@@ -415,52 +416,55 @@ class ParallelTaskScheduler:
                     page.logic_tasks = task_descriptions
                     self.crawler.store.add_page(page, persist=True)
 
-                    print(f"[UpdatePages] ✓ 页面已更新，重新生成了 {len(task_descriptions)} 个任务")
+                    print(f"[UpdatePages] Page updated, regenerated {len(task_descriptions)} tasks")
 
-                    # 4. 标记状态（允许LLM重新规划这个页面）
+                    # 4. Mark state (allow LLM to re-plan this page)
                     self.task_planning_agent.state.updated_pages.add(url)
                     self.task_planning_agent.state.executed_pages.discard(url)
                 else:
-                    print(f"[UpdatePages] ⚠️ 页面不在store中")
+                    print(f"[UpdatePages] Page not in store")
 
             except Exception as e:
-                print(f"[UpdatePages] ✗ 更新失败: {e}")
+                print(f"[UpdatePages] Update failed: {e}")
 
-        print(f"[UpdatePages] 更新完成\n")
+        print(f"[UpdatePages] Update complete\n")
 
     def _execute_task_wrapper(self, task: Task):
         """
-        任务执行包装器（在worker线程中运行）
+        Task execution wrapper (runs in worker thread)
 
-        流程：
-        1. 从driver池获取driver（统一管理，包括主driver）
-        2. 执行任务
-        3. 归还driver到池
-        4. 从executing_tasks移除
+        Flow:
+        1. Get driver from pool (unified management, including main driver)
+        2. Execute task
+        3. Return driver to pool
+        4. Remove from executing_tasks
 
         Args:
-            task: 要执行的任务
+            task: Task to execute
         """
         driver = None
 
         try:
-            # ===== 步骤1: 从池中获取driver（主driver和子driver统一管理）=====
+            # ThreadPoolExecutor does not inherit parent thread ContextVar, need to set category explicitly in worker thread
+            tracker.set_category("task_exec_bridge")
+
+            # ===== Step 1: Get driver from pool (main driver and sub-drivers unified management) =====
             driver = self.driver_pool.acquire(task.task_id, timeout=300)
 
             if not driver:
-                print(f"[Worker] ✗ 获取driver超时: {task.task_id}")
+                print(f"[Worker] Driver acquisition timed out: {task.task_id}")
                 return {"task_id": task.task_id, "status": "error", "error": "Driver timeout"}
 
-            # ===== 步骤2: 执行任务 =====
+            # ===== Step 2: Execute task =====
             executor = IndependentTaskExecutor(
                 shared_store=self.crawler.store,
                 client=self.client,
                 base_url=self.crawler.initial_url,
                 task_gen=self.crawler.task_gen,
-                content_index=self.crawler.content_index  # ✅ 传入去重索引
+                content_index=self.crawler.content_index  # Pass dedup index
             )
 
-            # 🆕 生成driver信息标识（主driver标识为"main"，子driver标识为"sub_XX"）
+            # Generate driver info identifier (main driver identified as "main", sub-drivers as "sub_XX")
             pool_index = getattr(driver, '_pool_index', 0)
             if pool_index == "main":
                 driver_info = "main"
@@ -472,68 +476,68 @@ class ParallelTaskScheduler:
             return result
 
         finally:
-            # ===== 步骤3: 归还driver到池 =====
+            # ===== Step 3: Return driver to pool =====
             if driver:
                 self.driver_pool.release(task.task_id, cleanup=False)
 
-            # ===== 步骤4: 从executing_tasks移除 =====
+            # ===== Step 4: Remove from executing_tasks =====
             with self.executing_lock:
                 self.executing_tasks.pop(task.task_id, None)
 
     def _wait_all_tasks(self):
         """
-        等待所有任务完成（包括队列中的和执行中的）
+        Wait for all tasks to complete (including those in queue and executing)
 
-        改进：先等待队列清空，再等待执行中的任务完成
+        Improvement: Wait for queue to empty first, then wait for executing tasks to complete
         """
-        # ✅ 步骤1: 等待队列清空（无超时，一直等待）
+        # Step 1: Wait for queue to empty (no timeout, wait indefinitely)
         if not self.task_queue.empty():
             queue_size = self.task_queue.qsize()
-            print(f"[ParallelScheduler] 等待队列清空（当前队列: {queue_size} 个任务）...")
+            print(f"[ParallelScheduler] Waiting for queue to empty (current queue: {queue_size} tasks)...")
 
-            # 无限等待队列为空
+            # Wait indefinitely for queue to be empty
             while not self.task_queue.empty():
                 current_size = self.task_queue.qsize()
-                print(f"[ParallelScheduler] 队列剩余: {current_size} 个任务...")
+                print(f"[ParallelScheduler] Queue remaining: {current_size} tasks...")
                 time.sleep(1)
 
-            print(f"[ParallelScheduler] ✓ 队列已清空")
+            print(f"[ParallelScheduler] Queue emptied")
 
-        # ✅ 步骤2: 等待所有执行中的任务完成
+        # Step 2: Wait for all executing tasks to complete
         with self.executing_lock:
             tasks_to_wait = list(self.executing_tasks.values())
             task_count = len(tasks_to_wait)
 
         if task_count == 0:
-            print(f"[ParallelScheduler] ✓ 没有执行中的任务")
+            print(f"[ParallelScheduler] No executing tasks")
             return
 
-        print(f"[ParallelScheduler] 等待 {task_count} 个执行中的任务完成...")
+        print(f"[ParallelScheduler] Waiting for {task_count} executing tasks to complete...")
 
         for future in as_completed(tasks_to_wait):
             try:
                 future.result()
             except Exception as e:
-                print(f"[ParallelScheduler] 任务执行出错: {e}")
+                print(f"[ParallelScheduler] Task execution error: {e}")
 
-        print(f"[ParallelScheduler] ✓ 所有任务已完成\n")
+        print(f"[ParallelScheduler] All tasks completed\n")
 
     def _should_terminate(self) -> bool:
         """
-        判断是否应该终止
+        Determine whether to terminate
 
-        逻辑：
-        1. 基础条件：规划不活跃 + 队列为空 + 无执行中任务
-        2. 检查是否有未执行页面
-        3. 如果有未执行页面：
-           - 如果是第一次（is_retry_after_finish=False）→ 设置标记，再问LLM一次
-           - 如果是第二次（is_retry_after_finish=True）→ LLM连续两次FINISH，直接结束
-        4. 如果没有未执行页面 → 直接结束
+        Logic:
+        1. Base condition: planning inactive + queue empty + no executing tasks
+        2. Check for unexecuted pages
+        3. If unexecuted pages exist:
+           - First time (is_retry_after_finish=False) -> set flag, ask LLM once more
+           - Second time (is_retry_after_finish=True) -> LLM returned FINISH twice, end directly
+        4. If no unexecuted pages -> end directly
 
         Returns:
-            True表示应该终止
+            True means should terminate
         """
-        # 第1层：基础条件
+        # Layer 1: Base conditions
         with self.executing_lock:
             has_executing_tasks = len(self.executing_tasks) > 0
 
@@ -542,69 +546,69 @@ class ParallelTaskScheduler:
            has_executing_tasks:
             return False
 
-        # 第2层：检查是否有未执行页面
+        # Layer 2: Check for unexecuted pages
         if self._has_unexecuted_pages():
-            # 有未执行页面
+            # Unexecuted pages exist
             if self.is_retry_after_finish:
-                # 这已经是重试了，LLM第二次还是FINISH → 直接结束
-                print(f"[ParallelScheduler] ⚠️ LLM重试后仍返回FINISH，强制结束")
-                print(f"[ParallelScheduler] → 通知规划线程退出")
+                # This is already a retry, LLM returned FINISH a second time -> end directly
+                print(f"[ParallelScheduler] LLM still returned FINISH after retry, force ending")
+                print(f"[ParallelScheduler] -> Notifying planning thread to exit")
 
                 self.should_continue = False
-                self.is_retry_after_finish = False  # 重置标记
+                self.is_retry_after_finish = False  # Reset flag
                 self.wait_confirmation.set()
                 return True
             else:
-                # 第一次，给LLM一次重新考虑的机会
-                print(f"[ParallelScheduler] ✓ 检测到未执行页面，给LLM一次重新考虑的机会")
-                print(f"[ParallelScheduler] → 通知规划线程继续（重试）")
+                # First time, give LLM a chance to reconsider
+                print(f"[ParallelScheduler] Detected unexecuted pages, giving LLM a chance to reconsider")
+                print(f"[ParallelScheduler] -> Notifying planning thread to continue (retry)")
 
-                self.is_retry_after_finish = True  # 设置重试标记
+                self.is_retry_after_finish = True  # Set retry flag
                 self.should_continue = True
                 self.planning_active = True
                 self.wait_confirmation.set()
                 return False
         else:
-            # 没有未执行页面 → 直接结束
-            print(f"[ParallelScheduler] ✓ 无未执行页面，确认终止")
-            print(f"[ParallelScheduler] → 通知规划线程退出")
+            # No unexecuted pages -> end directly
+            print(f"[ParallelScheduler] No unexecuted pages, confirming termination")
+            print(f"[ParallelScheduler] -> Notifying planning thread to exit")
 
             self.should_continue = False
-            self.is_retry_after_finish = False  # 重置标记
+            self.is_retry_after_finish = False  # Reset flag
             self.wait_confirmation.set()
             return True
 
     def _has_unexecuted_pages(self) -> bool:
         """
-        检查是否还有未执行的页面
+        Check if there are still unexecuted pages
 
         Returns:
-            True表示还有未执行的页面
+            True means there are still unexecuted pages
         """
         try:
-            # 生成当前的任务规划图
+            # Generate the current task planning graph
             graph = self.crawler._generate_graph_for_task_plan()
 
-            # 检查每个节点是否有未执行的任务
+            # Check each node for unexecuted tasks
             for node in graph.get("nodes", []):
                 url = node["url"]
                 tasks = node.get("tasks", [])
 
-                # ✅ 如果页面未执行且有任务
+                # If page is not executed and has tasks
                 if url not in self.task_planning_agent.state.executed_pages and tasks:
                     return True
 
             return False
 
         except Exception as e:
-            print(f"[CheckUnexecuted] 检查失败: {e}")
+            print(f"[CheckUnexecuted] Check failed: {e}")
             return False
 
     def _save_tasks_to_json(self):
         """
-        保存所有规划的任务到JSON文件
+        Save all planned tasks to JSON file
 
-        注意：此方法应在tasks_lock保护下调用
+        Note: This method should be called under tasks_lock protection
         """
         try:
             with open(self.tasks_json_path, 'w', encoding='utf-8') as f:
@@ -613,15 +617,15 @@ class ParallelTaskScheduler:
                     "tasks": self.planned_tasks
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[ParallelScheduler] 保存任务JSON失败: {e}")
+            print(f"[ParallelScheduler] Failed to save tasks JSON: {e}")
 
     def get_worker_drivers(self) -> list:
       """
-      获取所有worker drivers（用于传递给下一阶段）
-      
+      Get all worker drivers (for passing to next phase)
+
       Returns:
-          worker drivers列表
+          Worker drivers list
       """
-      if hasattr(self, 'driver_pool') and self.driver_pool:  # ✅ 正确
-          return self.driver_pool.drivers  # ✅ DriverPool.drivers 是 List[webdriver.Chrome]
+      if hasattr(self, 'driver_pool') and self.driver_pool:
+          return self.driver_pool.drivers  # DriverPool.drivers is List[webdriver.Chrome]
       return []

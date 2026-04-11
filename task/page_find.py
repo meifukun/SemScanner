@@ -10,13 +10,13 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 
 try:
-    from bs4 import BeautifulSoup  # 可选；没有也能跑，会退化到正则
+    from bs4 import BeautifulSoup  # Optional; works without it but falls back to regex
 except Exception:
     BeautifulSoup = None
 
 # task/page_find.py
 CONFIG = {
-    "require_same_path": False,   # ← 改成 False：不同 path 也参与内容相似度判断
+    "require_same_path": False,   # Changed to False: different paths also participate in content similarity comparison
     "dom_n_gram": 3,
     "text_hamming_thresh": 1,
     "dom_hamming_thresh": 1,
@@ -27,34 +27,34 @@ CONFIG = {
 }
 
 # def _strip_fragment(u: str) -> str:
-#     """移除 fragment，但对于 SPA 路由（#/xxx）保留"""
+#     """Remove fragment, but keep SPA routes (#/xxx)"""
 #     pu = urlparse(u)
-#     # 如果 fragment 看起来像路由路径（以 / 开头），保留它
+#     # If fragment looks like a route path (starts with /), keep it
 #     if pu.fragment and pu.fragment.startswith('/'):
-#         return u  # 保留原样
+#         return u  # Keep as-is
 #     return urlunparse((pu.scheme, pu.netloc, pu.path or "/", pu.params, pu.query, ""))
 
 from urllib.parse import urlparse, urlunparse
 
 def _strip_fragment(u: str) -> str:
     """
-    只在 '#' 出现在 '?' 后面的情况下移除 fragment。
-    否则保持 URL 完全不变。
+    Only remove fragment when '#' appears after '?'.
+    Otherwise keep the URL completely unchanged.
     """
 
-    # 找到问号和井号的位置（不存在则为 -1）
+    # Find positions of '?' and '#' (-1 if not present)
     q = u.find("?")
     h = u.find("#")
 
-    # 情况1：没有 '?' => 保持原样
+    # Case 1: No '?' => keep as-is
     if q == -1:
         return u
 
-    # 情况2：有 '?'，但 '#' 在 '?' 前 => 保持原样
+    # Case 2: Has '?', but '#' is before '?' => keep as-is
     if h == -1 or h < q:
         return u
 
-    # 情况3： '#' 出现在 '?' 后 => 执行 strip fragment
+    # Case 3: '#' appears after '?' => perform strip fragment
     pu = urlparse(u)
     return urlunparse((pu.scheme, pu.netloc, pu.path or "/", pu.params, pu.query, ""))
 
@@ -99,24 +99,24 @@ def _url_equiv(ua: str, ub: str) -> bool:
 
 def extract_main_text(html_str: str, driver=None) -> str:
     """
-    提取主要文本内容
-    
+    Extract main text content
+
     Args:
-        html_str: HTML源码（用于fallback）
-        driver: Selenium WebDriver（可选，用于获取可见文本）
-    
+        html_str: HTML source code (for fallback)
+        driver: Selenium WebDriver (optional, for getting visible text)
+
     Returns:
-        str: 清理后的文本
+        str: Cleaned text
     """
-    # 🆕 如果提供了driver，使用JavaScript获取可见文本（快速方案）
+    # If driver is provided, use JavaScript to get visible text (fast approach)
     if driver:
         try:
             visible_text = driver.execute_script("""
-                // 递归获取可见元素的文本
+                // Recursively get visible element text
                 function getVisibleText(el) {
                     if (!el) return '';
                     
-                    // 检查元素是否可见
+                    // Check if element is visible
                     const style = window.getComputedStyle(el);
                     if (style.display === 'none' || 
                         style.visibility === 'hidden' || 
@@ -124,20 +124,20 @@ def extract_main_text(html_str: str, driver=None) -> str:
                         return '';
                     }
                     
-                    // 排除script/style/noscript
+                    // Exclude script/style/noscript
                     const tagName = el.tagName ? el.tagName.toLowerCase() : '';
                     if (['script', 'style', 'noscript', 'template'].includes(tagName)) {
                         return '';
                     }
                     
-                    // 排除常见非内容区域
+                    // Exclude common non-content areas
                     const className = el.className || '';
                     const classStr = typeof className === 'string' ? className : '';
                     if (/header|footer|nav|ads|ad-|sidebar|breadcrumb|login|subscribe/i.test(classStr)) {
                         return '';
                     }
                     
-                    // 获取文本节点
+                    // Get text nodes
                     let text = '';
                     for (let node of el.childNodes) {
                         if (node.nodeType === Node.TEXT_NODE) {
@@ -154,7 +154,7 @@ def extract_main_text(html_str: str, driver=None) -> str:
             """)
             
             if visible_text and visible_text.strip():
-                # 清理文本
+                # Clean text
                 text = html.unescape(visible_text)
                 text = re.sub(r'\s+', ' ', text).strip()
                 text = re.sub(r'\b\d{1,2}:\d{2}(:\d{2})?\b', ' <TIME> ', text)
@@ -165,7 +165,7 @@ def extract_main_text(html_str: str, driver=None) -> str:
         except Exception as e:
             print(f"    [Warning: driver extraction failed ({e}), falling back to HTML parsing]")
     
-    # 🔄 Fallback：使用原来的HTML解析方法
+    # Fallback: use original HTML parsing method
     if not html_str:
         return ""
     
@@ -253,25 +253,25 @@ SELF_CLOSING = {"br","hr","img","input","meta","link"}
 
 def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
     """
-    提取DOM标签序列
-    
+    Extract DOM tag sequence
+
     Args:
-        html_str: HTML源码（用于fallback）
-        driver: Selenium WebDriver（可选，用于只获取可见元素的DOM结构）
-    
+        html_str: HTML source code (for fallback)
+        driver: Selenium WebDriver (optional, for getting visible element DOM structure only)
+
     Returns:
-        List[str]: 标签序列
+        List[str]: Tag sequence
     """
-    # 🆕 如果提供了driver，使用JavaScript获取可见元素的DOM结构
+    # If driver is provided, use JavaScript to get visible element DOM structure
     if driver:
         try:
             print("    [Using driver to extract visible DOM structure]")
             visible_tags = driver.execute_script("""
-                // 递归遍历可见元素，收集标签序列
+                // Recursively traverse visible elements, collect tag sequence
                 function getVisibleDOMSequence(el, sequence) {
                     if (!el || !el.tagName) return;
                     
-                    // 检查元素是否可见
+                    // Check if element is visible
                     const style = window.getComputedStyle(el);
                     if (style.display === 'none' || 
                         style.visibility === 'hidden' || 
@@ -281,27 +281,27 @@ def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
                     
                     const tagName = el.tagName.toLowerCase();
                     
-                    // 排除script/style/noscript
+                    // Exclude script/style/noscript
                     if (['script', 'style', 'noscript', 'template'].includes(tagName)) {
                         return;
                     }
                     
-                    // 排除常见非内容区域
+                    // Exclude common non-content areas
                     const className = el.className || '';
                     const classStr = typeof className === 'string' ? className : '';
                     if (/header|footer|nav|ads|ad-|sidebar|breadcrumb|login|subscribe/i.test(classStr)) {
                         return;
                     }
                     
-                    // 添加开始标签
+                    // Add opening tag
                     sequence.push(tagName);
                     
-                    // 遍历子元素
+                    // Traverse child elements
                     for (let child of el.children) {
                         getVisibleDOMSequence(child, sequence);
                     }
                     
-                    // 添加结束标签（排除自闭合标签）
+                    // Add closing tag (exclude self-closing tags)
                     const selfClosing = ['br', 'hr', 'img', 'input', 'meta', 'link'];
                     if (!selfClosing.includes(tagName)) {
                         sequence.push('/' + tagName);
@@ -320,7 +320,7 @@ def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
         except Exception as e:
             print(f"    [Warning: driver DOM extraction failed ({e}), falling back to HTML parsing]")
     
-    # 🔄 Fallback：使用原来的HTML解析方法
+    # Fallback: use original HTML parsing method
     print("    [Using HTML parsing to extract DOM structure]")
     if BeautifulSoup is None:
         return [m.lower() for m in re.findall(r"<\s*([a-zA-Z0-9]+)", html_str or "")]
@@ -363,8 +363,8 @@ class Cluster:
     id: int
     text_fp: int
     dom_fp: int
-    members: Set[str] = field(default_factory=set)  # URLs（已 strip fragment）
-    repr_url: str = ""                              # 代表 URL
+    members: Set[str] = field(default_factory=set)  # URLs (already strip fragment)
+    repr_url: str = ""                              # Representative URL
 
 class ContentDedupeIndex:
     def __init__(self, store_path: str = "dedupe_index.json"):
@@ -376,7 +376,7 @@ class ContentDedupeIndex:
         if os.path.exists(store_path):
             self._load()
 
-    # ---------- 持久化 ----------
+    # ---------- Persistence ----------
     def _load(self):
         data = json.load(open(self.store_path, "r", encoding="utf-8"))
         self.next_id = data["next_id"]
@@ -407,7 +407,7 @@ class ContentDedupeIndex:
         json.dump(data, open(self.store_path, "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
 
-    # ---------- 索引桶 ----------
+    # ---------- Index buckets ----------
     @staticmethod
     def _split4(fp: int) -> List[int]:
         return [(fp >> (i*16)) & 0xFFFF for i in range(4)]
@@ -426,7 +426,7 @@ class ContentDedupeIndex:
             cands |= self.bucket_dom.get((i, part), set())
         return cands
 
-    # ---------- 核心逻辑 ----------
+    # ---------- Core logic ----------
     def _same_content(self, tf_a: int, df_a: int, tf_b: int, df_b: int) -> bool:
         ht = hamming(tf_a, tf_b)
         hd = hamming(df_a, df_b)
@@ -443,24 +443,24 @@ class ContentDedupeIndex:
             if len(url_n) < len(c.repr_url):
                 c.repr_url = url_n
 
-    # ---------- 单条判定（给 Crawler 用） ----------
+    # ---------- Single item classification (for Crawler) ----------
     def classify(self, url: str, html_str: str, driver=None) -> Dict:
-        """
-        返回：
+        “””
+        Returns:
           {
-            "is_new": True/False,     # 是否“新内容簇”
-            "cluster_id": int,        # 归入的簇
-            "repr_url": str,          # 当前簇代表 URL
-            "why": { ... }            # 解释（规则/距离/同路径/URL等价）
+            “is_new”: True/False,     # Whether this is a “new content cluster”
+            “cluster_id”: int,        # Assigned cluster
+            “repr_url”: str,          # Current cluster representative URL
+            “why”: { ... }            # Explanation (rule/distance/same path/URL equivalence)
           }
-        同时会把该 URL 增量写入索引（持久化）
-        """
+        Also incrementally writes this URL to the index (persistent)
+        “””
         url_n = normalize_url(url)
         text = extract_main_text(html_str or "", driver=driver)
         tfp = text_simhash(text)
         dfp = dom_simhash(html_str or "", n=CONFIG["dom_n_gram"], driver=driver)
 
-        # 👇 添加调试信息
+        # Debug info
         print(f"\n[Dedupe] Classifying: {url}")
         print(f"[Dedupe] Normalized: {url_n}")
         print(f"[Dedupe] Text preview: {text}")
@@ -469,7 +469,7 @@ class ContentDedupeIndex:
         print(f"[Dedupe] DOM fingerprint: {dfp}")
 
         cands = self._candidates(tfp, dfp) or set(self.clusters.keys())
-        print(f"[Dedupe] Candidate clusters: {cands}")  # 👈 加这行
+        print(f"[Dedupe] Candidate clusters: {cands}")
         target_cluster: Optional[Cluster] = None
         why = {
             "rule": "new_cluster",
@@ -489,7 +489,7 @@ class ContentDedupeIndex:
                 print(f"[Dedupe]     Skipped: different path")
                 continue
             if _url_equiv(url_n, c.repr_url):
-                print(f"[Dedupe]     ✅ Matched by URL equivalence")  # 👈 加这行
+                print(f"[Dedupe]     Matched by URL equivalence")
                 target_cluster = c
                 why.update({
                     "rule": "url_strict_eq",
@@ -498,7 +498,7 @@ class ContentDedupeIndex:
                 })
                 break
             if self._same_content(tfp, dfp, c.text_fp, c.dom_fp):
-                print(f"[Dedupe]     ✅ Matched by content similarity")  # 👈 加这行
+                print(f"[Dedupe]     Matched by content similarity")
                 target_cluster = c
                 why.update({
                     "rule": "text+dom",
@@ -507,10 +507,10 @@ class ContentDedupeIndex:
                     "ht": hamming(tfp, c.text_fp), "hd": hamming(dfp, c.dom_fp)
                 })
                 break
-        print(f"[Dedupe] Final: target_cluster={target_cluster.id if target_cluster else None}")  # 👈 加这行
+        print(f"[Dedupe] Final: target_cluster={target_cluster.id if target_cluster else None}")
 
         if target_cluster is None:
-            # 新簇
+            # New cluster
             cid = self.next_id
             self.next_id += 1
             c = Cluster(id=cid, text_fp=tfp, dom_fp=dfp,
@@ -520,7 +520,7 @@ class ContentDedupeIndex:
             self._save()
             return {"is_new": True, "cluster_id": cid, "repr_url": c.repr_url, "why": why}
         else:
-            # 并入旧簇
+            # Merge into existing cluster
             c = target_cluster
             c.members.add(url_n)
             self._maybe_update_repr(c, url_n)
@@ -533,21 +533,21 @@ class ContentDedupeIndex:
 
 def main():
     """
-    Debug 工具：测试页面去重逻辑
-    
-    使用方法：
+    Debug tool: test page deduplication logic
+
+    Usage:
         python task/page_find.py
-    
-    然后在提示符下输入 URL 进行测试
+
+    Then enter URLs at the prompt to test
     """
     print("="*70)
     print("Page Dedupe Debug Tool")
     print("="*70)
 
-    # 初始化 driver
+    # Initialize driver
     print("\n[1] Initializing Chrome driver...")
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument("--headless")  # 取消注释可以无头模式
+    chrome_options.add_argument("--headless")  # Uncomment for headless mode
     chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument("--allow-running-insecure-content")
     chrome_options.add_argument("--disable-xss-auditor")
@@ -560,7 +560,7 @@ def main():
     print("✓ Driver initialized")
 
     try:
-        # 交互式测试
+        # Interactive testing
         while True:
             print("\n" + "="*70)
             url = input("\nEnter URL to test (or 'quit' to exit): ").strip()
@@ -571,31 +571,31 @@ def main():
             if not url:
                 continue
 
-            # 访问页面
+            # Visit page
             print(f"\n[2] Visiting: {url}")
             driver.get(url)
 
-            # 等待页面加载
+            # Wait for page to load
             settle_wait = 0.6
             print(f"[3] Waiting {settle_wait}s for page to settle...")
             time.sleep(settle_wait)
 
-            # 保存截图
+            # Save screenshot
             screenshot_dir = "screenshots"
             os.makedirs(screenshot_dir, exist_ok=True)
             
-            # 将URL转换为合法文件名（替换特殊字符）
+            # Convert URL to valid filename (replace special characters)
             safe_filename = url.replace("://", "_").replace("/", "_").replace("?", "_").replace("&", "_").replace("#", "_").replace(":", "_")
             screenshot_path = os.path.join(screenshot_dir, f"{safe_filename}.png")
             
             driver.save_screenshot(screenshot_path)
             print(f"\n[2.5] Screenshot saved: {screenshot_path}")
 
-            # 获取 page source
+            # Get page source
             html_src = driver.page_source
             print(f"\n[4] Page source length: {len(html_src)} characters")
 
-            # 提取文本
+            # Extract text
             print(f"\n[5] Extracting main text...")
             text = extract_main_text(html_src, driver)
             print(f"    Text length: {len(text)} characters")
@@ -606,7 +606,7 @@ def main():
                 print("    ...")
             print("    " + "-"*66)
 
-            # 计算哈希
+            # Compute hashes
             print(f"\n[6] Computing fingerprints...")
             text_fp = text_simhash(text)
             dom_fp = dom_simhash(html_src, n=CONFIG["dom_n_gram"], driver=driver)
@@ -614,7 +614,7 @@ def main():
             print(f"    Text SimHash: {text_fp}")
             print(f"    DOM SimHash:  {dom_fp}")
 
-            # 提取 DOM 序列（可选，用于调试）
+            # Extract DOM sequence (optional, for debugging)
             print(f"\n[7] DOM tag sequence:")
             dom_seq = dom_tag_sequence(html_src, driver=driver)
             print(f"    Total tags: {len(dom_seq)}")
@@ -622,23 +622,23 @@ def main():
             if len(dom_seq) > 30:
                 print(f"    ...")
 
-            # 可选：打印完整的 page source（如果需要）
+            # Optional: print full page source (if needed)
             show_full = input("\nShow full page source? (y/N): ").strip().lower()
             if show_full == 'y':
                 # print("\n[8] Full page source:")
                 # print("="*70)
-                # # 打印开头2000字符
-                # print("=== 开头 2000 字符 ===")
+                # # Print first 2000 characters
+                # print("=== First 2000 characters ===")
                 # print(html_src[:2000])
 
-                # # 打印中间5000字符
-                # print("\n=== 中间 5000 字符 ===")
-                # mid_start = len(html_src) // 2 - 2500  # 从中点往前2500
+                # # Print middle 5000 characters
+                # print("\n=== Middle 5000 characters ===")
+                # mid_start = len(html_src) // 2 - 2500  # 2500 before midpoint
                 # mid_end = mid_start + 5000
                 # print(html_src[max(0, mid_start):mid_end])
 
-                # # 打印最后2000字符
-                # print("\n=== 最后 2000 字符 ===")
+                # # Print last 2000 characters
+                # print("\n=== Last 2000 characters ===")
                 # print(html_src[-2000:])
                 # print("="*70)
 

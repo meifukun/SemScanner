@@ -6,16 +6,17 @@ from pathlib import Path
 from task.tasks import Task
 from app_info.models import PageInfo
 from config.llm_config import get_model_name, get_temperature
+from utils.token_tracker import tracker
 
 class TaskGenerator:
     """
-    “页面 → 任务” 生成器
+    "Page -> Task" generator
     """
     def __init__(self, client, task_queue, root_dir,prompt_path: str = "prompt/task_generate.txt", crawl_prompt_path: str = "prompt/task_generate_crawl.txt",
         logic_prompt_path: str = "prompt/task_generate_logic.txt",):
-        self.client = client  # 可传入你在 main 里创建的 OpenAI(client)
+        self.client = client  # Can pass in the OpenAI(client) created in main
         self.prompt_path = Path(prompt_path)
-        self.task_queue = task_queue  # 可选：用于提供 HISTORICAL TASKS
+        self.task_queue = task_queue  # Optional: used for providing HISTORICAL TASKS
         self.crawl_prompt_path = Path(crawl_prompt_path)
         self.logic_prompt_path = Path(logic_prompt_path)
         self.root_dir = Path(root_dir)
@@ -41,7 +42,7 @@ class TaskGenerator:
 
 
     def _build_page_context(self, page: PageInfo, ) -> str:
-        # 你可以按需更换为更详细的抽象；这里组合 URL/Title/Abstract/PageInfo
+        # Can be replaced with a more detailed abstract as needed; here combines URL/Title/Abstract/PageInfo
         ctx = []
         ctx.append(f"URL: {page.url}")
         if getattr(page, "title", None):
@@ -55,17 +56,17 @@ class TaskGenerator:
         return "\n".join(ctx)
 
     def _load_prompt_template(self, prompt_path) -> str:
-        # 使用你新定义的 Planner Prompt（包含 PAGE CONTEXT 与 HISTORICAL TASKS 两段）
+        # Use your newly defined Planner Prompt (containing PAGE CONTEXT and HISTORICAL TASKS sections)
         return prompt_path.read_text(encoding="utf-8")
 
     def generate_navigation_for_page(self, page: PageInfo, historical: str = "") -> List[Task]:
         """
-        使用 LLM 生成若干“根任务”（避免与历史重复，尽量扩展覆盖/深度）
+        Use LLM to generate several "root tasks" (avoid repeating history, try to expand coverage/depth)
         """
         tmpl = self._load_prompt_template(self.crawl_prompt_path)
         page_context = self._build_page_context(page)
 
-        # 用两段式输入：System=模板；User=按规范拼接 PAGE CONTEXT / HISTORICAL TASKS
+        # Two-part input: System=template; User=assembled PAGE CONTEXT / HISTORICAL TASKS per specification
         user_block = f"""--- INPUTS YOU RECEIVE ---
 PAGE CONTEXT:
 {page_context}
@@ -73,6 +74,7 @@ PAGE CONTEXT:
 HISTORICAL (do not repeat):
 {historical}"""
         self._log_nav(f"[TaskGenerator] LLM input:\n{tmpl}\n{user_block}")
+        tracker.set_category("crawl_taskgen_nav")
         completion = self.client.chat.completions.create(
             model=get_model_name("task_generator"),
             messages=[
@@ -84,30 +86,31 @@ HISTORICAL (do not repeat):
         text = completion.choices[0].message.content
         self._log_nav(f"[TaskGenerator] LLM output:\n{text}")
 
-        # 解析 Tasks 段
+        # Parse Tasks section
         task_lines = self._parse_tasks(text)
 
         return task_lines
-    
+
     def generate_logic_for_page(self, page: PageInfo):
         """
-        使用 LLM 生成若干“根任务”（避免与历史重复，尽量扩展覆盖/深度）
+        Use LLM to generate several "root tasks" (avoid repeating history, try to expand coverage/depth)
         """
         self._log_biz(f"generate_logic_task_for_page {page.url}")
-        # 这个会导致wordpress配置错误
+        # This would cause wordpress configuration errors
         # if "options" in page.url or "login" in page.url:
         if "login" in page.url:
             self._log_biz(f"[TaskGenerator] Skip logic task generation for {page.url}")
-            return "", []  # 返回空reasoning和空任务列表
+            return "", []  # Return empty reasoning and empty task list
         tmpl = self._load_prompt_template(self.logic_prompt_path)
         page_context = self._build_page_context(page)
 
-        # 用两段式输入：System=模板；User=按规范拼接 PAGE CONTEXT / HISTORICAL TASKS
+        # Two-part input: System=template; User=assembled PAGE CONTEXT / HISTORICAL TASKS per specification
         user_block = f"""--- INPUTS YOU RECEIVE ---
 PAGE CONTEXT:
 {page_context}
 """
         self._log_biz(f"[TaskGenerator] LLM input:\n{tmpl}\n{user_block}")
+        tracker.set_category("crawl_taskgen_logic")
         completion = self.client.chat.completions.create(
             model=get_model_name("task_generator"),
             messages=[
@@ -119,13 +122,13 @@ PAGE CONTEXT:
         text = completion.choices[0].message.content
         self._log_biz(f"[TaskGenerator] LLM output:\n{text}")
 
-        # 解析 Reasoning 和 Tasks 部分
+        # Parse Reasoning and Tasks sections
         reasoning, task_lines = self._parse_reasoning_and_tasks(text)
 
-        # # 构建 Task（task_id 由外部队列分配；此处给 -1 占位）
+        # # Build Tasks (task_id assigned by external queue; using -1 as placeholder here)
         # tasks = [Task(task_id=-1, description=desc, initial_url=page.url)
         #         for desc in task_lines]
-    
+
         # for t in tasks:
         #     if getattr(t, "task_id", None) in (None, "-1"):
         #         t.task_id = self.task_queue.next_task_id()
@@ -134,24 +137,24 @@ PAGE CONTEXT:
         #     self.task_queue.push(t)
 
         # return reasoning
-        # 构建 Task 描述列表
+        # Build task description list
         task_descriptions = [desc for desc in task_lines]
-        
-        # 👇 修改：不要 push 到队列，而是返回任务列表
+
+        # Modified: Don't push to queue, return task list instead
         # for t in tasks:
         #     if getattr(t, "task_id", None) in (None, "-1"):
         #         t.task_id = self.task_queue.next_task_id()
         #     self.task_queue.push(t)
-        
-        # 返回 reasoning 和任务列表
+
+        # Return reasoning and task list
         return reasoning, task_descriptions
 
     def _parse_tasks(self, text: str) -> List[str]:
         """
-        解析严格两段式输出（Reasoning/Tasks）。仅提取 Tasks 段。
+        Parse strict two-section output (Reasoning/Tasks). Only extract the Tasks section.
         """
-        # 防御：确保存在 "Tasks:" 标记
-        idx = text.find("Tasks:") 
+        # Defense: ensure "Tasks:" marker exists
+        idx = text.find("Tasks:")
         if idx > 0:
             tasks_section = text[idx + len("Tasks:"):].strip()
 
@@ -159,11 +162,11 @@ PAGE CONTEXT:
             if next_reason >= 0:
                 tasks_section = tasks_section[:next_reason].strip()
 
-            # 按行拆
+            # Split by lines
             lines = [ln.strip() for ln in tasks_section.splitlines() if ln.strip()]
 
-        # 防御：确保存在 "Tasks:" 标记
-        idx = text.find("URLs:") 
+        # Defense: ensure "Tasks:" marker exists
+        idx = text.find("URLs:")
         if idx > 0:
             tasks_section = text[idx + len("URLs:"):].strip()
 
@@ -171,52 +174,51 @@ PAGE CONTEXT:
             if next_reason >= 0:
                 tasks_section = tasks_section[:next_reason].strip()
 
-            # 按行拆
+            # Split by lines
             lines = [ln.strip() for ln in tasks_section.splitlines() if ln.strip()]
-        
+
         return lines
-    
+
     def _parse_reasoning_and_tasks(self, text: str) -> tuple[str, List[str]]:
         """
-        解析两段式输出（Reasoning/Tasks）。返回 Reasoning 和 Tasks 两部分内容。
-        宽松模式：Tasks 部分每行都保留，不做格式限制。
+        Parse two-section output (Reasoning/Tasks). Return both Reasoning and Tasks sections.
+        Relaxed mode: every line in the Tasks section is kept, no format restrictions.
         """
         reasoning = ""
         task_lines = []
-        
-        # 查找 Reasoning 部分
+
+        # Find Reasoning section
         idx_reasoning = text.find("Reasoning:")
         if idx_reasoning >= 0:
-            # 从 Reasoning: 后开始
+            # Start from after Reasoning:
             after_reasoning = text[idx_reasoning + len("Reasoning:"):].strip()
-            
-            # 查找 Tasks: 标记
+
+            # Find Tasks: marker
             idx_tasks = after_reasoning.find("Tasks:")
             if idx_tasks >= 0:
-                # Reasoning 内容是两个标记之间的部分
+                # Reasoning content is the part between the two markers
                 reasoning = after_reasoning[:idx_tasks].strip()
-                # Tasks 内容是 Tasks: 之后的部分
+                # Tasks content is the part after Tasks:
                 tasks_text = after_reasoning[idx_tasks + len("Tasks:"):].strip()
-                # 👇 宽松解析：每行都保留，只过滤完全空行
+                # Relaxed parsing: keep every line, only filter completely empty lines
                 task_lines = [
-                    ln.strip()  # 只做去除首尾空格
-                    for ln in tasks_text.splitlines() 
-                    if ln.strip()  # 只要不是空行就保留
+                    ln.strip()  # Only strip leading/trailing whitespace
+                    for ln in tasks_text.splitlines()
+                    if ln.strip()  # Keep as long as not empty
                 ]
             else:
-                # 没有 Tasks 部分，全部是 Reasoning
+                # No Tasks section, everything is Reasoning
                 reasoning = after_reasoning.strip()
         else:
-            # 没有 Reasoning 标记，尝试直接查找 Tasks
+            # No Reasoning marker, try to find Tasks directly
             idx_tasks = text.find("Tasks:")
             if idx_tasks >= 0:
                 tasks_text = text[idx_tasks + len("Tasks:"):].strip()
-                # 👇 同样宽松解析
+                # Same relaxed parsing
                 task_lines = [
                     ln.strip()
-                    for ln in tasks_text.splitlines() 
+                    for ln in tasks_text.splitlines()
                     if ln.strip()
                 ]
-        
-        return reasoning, task_lines
 
+        return reasoning, task_lines

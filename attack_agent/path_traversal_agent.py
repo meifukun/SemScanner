@@ -1,10 +1,10 @@
 """
-Path Traversal Agent - 优化版
-优化点：
-1. 使用 Deep-Travelsal.txt 模板 + 6个常见文件 = 5000+ payloads
-2. 规则匹配到敏感信息立即停止测试
-3. 响应去重 + 采样15个 + LLM研判
-4. 日志只记录关键的15个请求
+Path Traversal Agent -
+：
+1.  Deep-Travelsal.txt  + 6 = 5000+ payloads
+2.
+3.  + 15 + LLM
+4. 15
 """
 
 import time
@@ -21,24 +21,21 @@ from config.llm_config import get_model_name, get_temperature
 
 class PathTraversalAgent:
     """
-    路径遍历测试Agent（优化版）
+    Agent（）
 
-    工作流程：
-    1. 调用LLM分析请求，识别路径遍历注入点
-    2. LLM生成带{PAYLOAD}占位符的curl命令模板
-    3. 从模板文件生成大量payload（~5000个）
-    4. 执行测试，规则匹配到敏感信息立即停止
-    5. 响应去重 + 采样15个
-    6. 调用LLM研判最终结果
+    Workflow:
+    1. LLM，
+    2. LLM generates curl command templates with {PAYLOAD} placeholder
+    3. payload（~5000）
+    4. ，
+    5.  + 15
+    6. LLM
     """
 
-    # 🆕 6个跨平台常见文件（用于生成payload）
     TARGET_FILES = [
-        # "etc/passwd",                              # Linux/Unix 用户信息
-        "etc/hosts",                               # 几乎所有系统都有
-        # "Windows/win.ini",                         # Windows 配置文件
-        "Windows/System32/drivers/etc/hosts",      # Windows hosts文件
-        ".env"                                     # 现代应用配置文件
+        "etc/hosts",
+        "Windows/System32/drivers/etc/hosts",
+        ".env"
     ]
 
     def __init__(self, client,
@@ -46,23 +43,20 @@ class PathTraversalAgent:
                  judge_prompt_path: str = "prompt/path_traversal_judge.txt",
                  log_dir: str = "output/attack_logs/path_traversal",
                  template_file: str = "attack_agent/Deep-Travelsal.txt",
-                 request_delay: float = 0.4):  # ✅ 新增：请求间隔（默认50ms，即每秒20请求）
+                 request_delay: float = 0.4):
         self.client = client
         self.attack_prompt_path = Path(attack_prompt_path)
         self.judge_prompt_path = Path(judge_prompt_path)
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "path_traversal_agent.log"
-        self.request_delay = request_delay  # ✅ 保存请求延迟参数
+        self.request_delay = request_delay
 
-        # 🆕 加载payload模板
         self.template_file = Path(template_file)
         self.payload_templates = self._load_payload_templates()
 
-        # 🆕 在启动时生成并缓存所有payload
         self.all_payloads = self._generate_payloads()
 
-        # 🆕 记录所有payload到日志（启动时打印一次）
         self._log_all_payloads()
 
     def _log(self, *args):
@@ -74,15 +68,15 @@ class PathTraversalAgent:
             pass
 
     def _load_prompt_template(self, path: Path) -> str:
-        """加载prompt模板"""
+        """prompt"""
         return path.read_text(encoding="utf-8")
 
     def _load_payload_templates(self) -> List[str]:
         """
-        🆕 从 Deep-Travelsal.txt 加载payload模板
+        🆕  Deep-Travelsal.txt payload
 
         Returns:
-            模板列表（每行一个，包含{FILE}占位符）
+            （，{FILE}）
         """
         try:
             templates = []
@@ -100,10 +94,10 @@ class PathTraversalAgent:
 
     def _generate_payloads(self) -> List[str]:
         """
-        🆕 生成所有payload（模板 × 文件名）
+        🆕 payload（ × ）
 
         Returns:
-            完整的payload列表（~5000个）
+            payload（~5000）
         """
         payloads = []
         for template in self.payload_templates:
@@ -120,41 +114,35 @@ class PathTraversalAgent:
 
     def _log_all_payloads(self):
         """
-        🆕 在启动时将所有payload记录到日志（只记录一次）
+        🆕 payload（）
 
-        格式：
-        - 按目标文件分组显示
-        - 每个文件显示所有模板生成的payload
-        - 便于查看和调试
+        ：
+        -
+        - payload
+        -
         """
         self._log(f"\n{'='*70}")
         self._log(f"[Payload List] All Path Traversal Payloads (Total: {len(self.all_payloads)})")
         self._log(f"{'='*70}")
 
-        # 按目标文件分组
         for target_file in self.TARGET_FILES:
-            # 筛选出属于当前文件的payload
             file_payloads = [p for p in self.all_payloads if target_file in p]
 
             self._log(f"\n[Target File: {target_file}] ({len(file_payloads)} payloads)")
             self._log(f"-" * 70)
 
-            # 记录前10个和后10个payload（如果数量较多）
             if len(file_payloads) <= 20:
-                # 数量少，全部记录
                 for i, payload in enumerate(file_payloads, 1):
                     self._log(f"  {i:4d}. {payload}")
             else:
-                # 数量多，记录前10个和后10个
                 for i, payload in enumerate(file_payloads[:10], 1):
                     self._log(f"  {i:4d}. {payload}")
 
-                self._log(f"  ... (省略 {len(file_payloads) - 20} 个中间payload)")
+                self._log(f"  ... ( {len(file_payloads) - 20} payload)")
 
                 for i, payload in enumerate(file_payloads[-10:], len(file_payloads) - 9):
                     self._log(f"  {i:4d}. {payload}")
 
-        # 额外保存完整的payload列表到单独的文件
         payload_list_path = self.log_dir / "all_payloads.txt"
         try:
             with open(payload_list_path, 'w', encoding='utf-8') as f:
@@ -178,42 +166,37 @@ class PathTraversalAgent:
 
     def _contains_sensitive_content(self, response: str) -> bool:
         """
-        🆕 检查响应是否包含敏感文件内容（扩展版规则）
+        🆕 （）
 
-        扩展覆盖：
-        - Linux/Unix 配置文件
-        - Windows 配置文件
-        - 应用配置文件
-        - 环境变量
-        - 源代码特征
+        ：
+        - Linux/Unix
+        - Windows
+        -
+        -
+        -
         """
         patterns = [
-            # Linux/Unix 文件
             r"root:x:\d+:\d+",                      # /etc/passwd
             r"root:\$\d+\$",                        # /etc/shadow
             r"127\.0\.0\.1\s+localhost",            # /etc/hosts
             r"PATH=/usr/local",                     # environ
             r"HOME=/root",                          # environ
 
-            # Windows 文件
             r"\[fonts\]",                           # win.ini
             r"\[extensions\]",                      # win.ini
             r"\[MCI Extensions\]",                  # win.ini
 
-            # 应用配置文件
             r"DB_PASSWORD\s*=",                     # .env
             r"API_KEY\s*=",                         # .env
             r"SECRET_KEY\s*=",                      # .env
             r"DATABASE_URL\s*=",                    # .env
 
-            # 代码特征
-            r"<\?php",                              # PHP 源代码
-            r"import\s+os",                         # Python 源代码
-            r"const\s+\w+\s*=\s*require",          # Node.js 源代码
+            r"<\?php",
+            r"import\s+os",
+            r"const\s+\w+\s*=\s*require",
 
-            # 敏感关键词组合
-            r"password\s*[:=]\s*['\"]?\w+",        # 密码配置
-            r"secret\s*[:=]\s*['\"]?\w+",          # 密钥配置
+            r"password\s*[:=]\s*['\"]?\w+",
+            r"secret\s*[:=]\s*['\"]?\w+",
         ]
 
         for pattern in patterns:
@@ -224,34 +207,34 @@ class PathTraversalAgent:
 
     def _hash_response(self, response: str) -> str:
         """
-        🆕 对响应内容生成哈希（用于去重）
+        🆕 （）
 
         Returns:
-            MD5 哈希值
+            MD5
         """
         return hashlib.md5(response.encode('utf-8', errors='ignore')).hexdigest()
 
     def test(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        🆕 测试单个请求的路径遍历（优化版）
+        🆕 （）
 
-        优化点：
-        1. 大量payload（~5000个）
-        2. 规则匹配到立即停止
-        3. 响应去重 + 采样15个
-        4. LLM研判（总是调用）
+        ：
+        1. payload（~5000）
+        2.
+        3.  + 15
+        4. LLM（）
 
         Args:
-            request: 完整请求数据（包含response）
-            credentials: 账户凭证
+            request: full request data (including response)
+            credentials: account credentials
 
         Returns:
             {
                 "vulnerable": True/False,
                 "payloads_tested": int,
                 "sensitive_found": bool,
-                "sampled_results": List[Dict],  # 采样的15个请求
-                "analysis": str  # LLM分析
+                "sampled_results": List[Dict],  # 15
+                "analysis": str  # LLM
             }
         """
         method = request.get("method", "GET")
@@ -262,7 +245,6 @@ class PathTraversalAgent:
         self._log(f"{'='*70}")
         self._log(f"[PathTraversal] Testing: {method} {url}")
 
-        # ========== 第一步：调用LLM生成curl模板 ==========
         self._log(f"[Step 1: Calling LLM to Identify Injection Points]")
         curl_templates = self._generate_curl_templates(request)
 
@@ -280,16 +262,14 @@ class PathTraversalAgent:
         for i, tmpl in enumerate(curl_templates, 1):
             self._log(f"  {i}. {tmpl}")
 
-        # ========== 第二步：使用预生成的payload ==========
-        payloads = self.all_payloads  # 🆕 使用缓存的payload（启动时已生成）
+        payloads = self.all_payloads
         self._log(f"\n[Step 2: Using Pre-generated {len(payloads)} Path Traversal Payloads]")
 
-        # ========== 第三步：执行测试（规则匹配立即停止）==========
         self._log(f"\n[Step 3: Executing Tests with Early Stopping]")
 
-        all_results = []  # 所有结果
-        sensitive_results = []  # 匹配到敏感信息的结果
-        response_groups = {}  # 按响应内容分组（用于去重）
+        all_results = []
+        sensitive_results = []
+        response_groups = {}
         payloads_tested = 0
         stopped_early = False
 
@@ -297,14 +277,12 @@ class PathTraversalAgent:
             if stopped_early:
                 break
 
-            # 打印完整模板（不截断）
             self._log(f"\n[Testing Template]: {template}")
 
             for payload in payloads:
                 if stopped_early:
                     break
 
-                # 替换{PAYLOAD}为实际payload
                 if '{PAYLOAD}' not in template:
                     continue
 
@@ -312,7 +290,6 @@ class PathTraversalAgent:
                 final_command = append_credentials_to_curl(final_command, credentials)
 
                 try:
-                    # ✅ 速率控制：在每次请求前延迟
                     if self.request_delay > 0:
                         time.sleep(self.request_delay)
 
@@ -327,42 +304,35 @@ class PathTraversalAgent:
 
                     payloads_tested += 1
 
-                    # 解析HTTP状态码
                     from attack_agent.request_utils import parse_http_status_from_response
                     http_status, response_body = parse_http_status_from_response(stdout)
 
-                    # 打印每个请求的状态和响应
                     self._log(f"  ✓ Executed (curl_exit_code: {process.returncode})")
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
                     self._log(f"  Response length: {len(response_body)} bytes")
-                    # 打印完整响应（不截断）
                     self._log(f"  Response: {response_body}")
                     if stderr:
                         self._log(f"  Stderr: {stderr}")
 
-                    # 🆕 生成响应哈希（用于去重） - 使用response_body
                     response_hash = self._hash_response(response_body)
 
-                    # 🆕 检查是否包含敏感内容
                     is_sensitive = self._contains_sensitive_content(response_body)
 
                     result = {
                         "payload": payload,
                         "command": final_command,
-                        "response": response_body,  # 使用清理后的响应体
+                        "response": response_body,
                         "response_hash": response_hash,
                         "is_sensitive": is_sensitive
                     }
 
                     all_results.append(result)
 
-                    # 🆕 按响应哈希分组（用于去重）
                     if response_hash not in response_groups:
                         response_groups[response_hash] = []
                     response_groups[response_hash].append(result)
 
-                    # 🆕 如果匹配到敏感信息，立即停止！
                     if is_sensitive:
                         sensitive_results.append(result)
                         self._log(f"  ✓✓✓ SENSITIVE CONTENT DETECTED! Stopping test.")
@@ -382,7 +352,6 @@ class PathTraversalAgent:
         self._log(f"  Sensitive Results: {len(sensitive_results)}")
         self._log(f"  Stopped Early: {stopped_early}")
 
-        # ========== 第四步：采样15个唯一响应 ==========
         self._log(f"\n[Step 4: Sampling Up to 15 Unique Responses for LLM Analysis]")
 
         sampled_results = self._sample_responses(
@@ -394,7 +363,6 @@ class PathTraversalAgent:
         self._log(f"  Sampled: {len(sampled_results)} unique responses")
         self._log(f"  (Including {len(sensitive_results)} sensitive result(s))")
 
-        # ========== 第五步：LLM研判 ==========
         self._log(f"\n[Step 5: LLM Analysis]")
 
         judgment = self._judge_vulnerability(sampled_results)
@@ -422,24 +390,23 @@ class PathTraversalAgent:
                          sensitive_results: List[Dict],
                          max_samples: int = 15) -> List[Dict]:
         """
-        🆕 从响应中采样最多15个唯一响应
+        🆕 15
 
-        策略：
-        1. 敏感结果必须包含
-        2. 从每个唯一响应组中随机选一个
-        3. 最多15个
+        Strategy:
+        1.
+        2.
+        3. 15
 
         Args:
-            response_groups: 按哈希分组的响应
-            sensitive_results: 匹配到敏感信息的结果
-            max_samples: 最大采样数
+            response_groups:
+            sensitive_results:
+            max_samples:
 
         Returns:
-            采样的结果列表
+
         """
         sampled = []
 
-        # 1. 敏感结果必须包含（取每个哈希组的第一个）
         sensitive_hashes = set()
         for result in sensitive_results:
             if len(sampled) >= max_samples:
@@ -449,7 +416,6 @@ class PathTraversalAgent:
 
         self._log(f"  [Sampling] Added {len(sensitive_results)} sensitive result(s)")
 
-        # 2. 从其他唯一响应中随机采样
         other_hashes = [h for h in response_groups.keys() if h not in sensitive_hashes]
         random.shuffle(other_hashes)
 
@@ -457,7 +423,6 @@ class PathTraversalAgent:
             if len(sampled) >= max_samples:
                 break
 
-            # 从该组中随机选一个
             group = response_groups[response_hash]
             sampled.append(random.choice(group))
 
@@ -468,14 +433,13 @@ class PathTraversalAgent:
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> List[str]:
         """
-        调用LLM生成带{PAYLOAD}占位符的curl模板
+        Call LLM to generate curl templates with {PAYLOAD} placeholder
 
         Returns:
-            curl模板列表（包含{PAYLOAD}占位符）
+            Returns list of curl templates（{PAYLOAD}）
         """
         sys_prompt = self._load_prompt_template(self.attack_prompt_path)
 
-        # 格式化请求信息
         user_prompt = f"""REQUEST INFORMATION:
 Method: {request.get('method', 'GET')}
 URL: {request.get('url', '')}
@@ -487,7 +451,6 @@ Response Body (preview): {str(request.get('response_body', ''))}
 Please analyze this request and generate curl command templates with {{PAYLOAD}} placeholder for path traversal testing."""
 
         try:
-            # 在调用大模型前，记录输入
             self._log(f"[Attack Model Input] sys_prompt: {sys_prompt}")
             self._log(f"[Attack Model Input] user_prompt: {user_prompt}")
             completion = self.client.chat.completions.create(
@@ -501,7 +464,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
             llm_output = completion.choices[0].message.content
 
-            # 解析Commands部分
             templates = self._parse_curl_templates(llm_output)
 
             return templates
@@ -511,10 +473,9 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             return []
 
     def _parse_curl_templates(self, llm_output: str) -> List[str]:
-        """解析LLM输出中的curl命令模板"""
+        """LLMcurl"""
         templates = []
 
-        # 查找Commands部分
         lines = llm_output.split('\n')
         in_commands_section = False
 
@@ -526,13 +487,10 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                 continue
 
             if in_commands_section:
-                # 提取curl命令
                 if line.startswith('curl'):
                     templates.append(line)
                 elif line.startswith('-'):
-                    # 可能是列表格式
                     if 'curl' in line:
-                        # 提取curl部分
                         curl_part = line.split('curl', 1)[1] if 'curl' in line else ''
                         if curl_part:
                             templates.append('curl' + curl_part)
@@ -541,10 +499,10 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _judge_vulnerability(self, sampled_results: List[Dict]) -> Dict[str, Any]:
         """
-        🆕 调用LLM研判是否存在路径遍历漏洞（基于采样结果）
+        🆕 LLM（）
 
         Args:
-            sampled_results: 采样的测试结果（最多15个）
+            sampled_results: （15）
 
         Returns:
             {
@@ -554,12 +512,10 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         """
         judge_prompt = self._load_prompt_template(self.judge_prompt_path)
 
-        # ✅ 修复：提供完整的命令，让LLM知道payload是如何使用的
         test_results_text = []
         for idx, result in enumerate(sampled_results, 1):
             sensitive_tag = " [SENSITIVE]" if result.get("is_sensitive") else ""
 
-            # ✅ 格式化完整的curl命令（可能很长，只显示关键部分）
             command = result['command']
             command_preview = command
 
@@ -595,7 +551,6 @@ Analysis: [Your detailed analysis]
 """
 
         try:
-            # 在调用大模型前，记录输入
             self._log(f"[Judgment Model Input] judge_prompt: {judge_prompt}")
             self._log(f"[Judgment Model Input] user_prompt: {user_prompt}")
             completion = self.client.chat.completions.create(
@@ -609,7 +564,6 @@ Analysis: [Your detailed analysis]
 
             llm_output = completion.choices[0].message.content
 
-            # 解析判断结果
             vulnerable = False
             if re.search(r'Judgment:\s*VULNERABLE', llm_output, re.IGNORECASE):
                 vulnerable = True

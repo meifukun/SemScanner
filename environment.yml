@@ -137,4 +137,3 @@ dependencies:
       - yaswfp==0.9.3
       - zaproxy==0.4.0
       - zstandard==0.22.0
-prefix: /data/users/meifukun/anaconda3/envs/web-vul

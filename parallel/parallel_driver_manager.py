@@ -1,84 +1,84 @@
 # -*- coding: utf-8 -*-
 """
-并行Driver管理器 - 负责创建与主driver状态一致的独立driver实例
+Parallel Driver Manager - Responsible for creating independent driver instances consistent with the main driver's state
 """
 
 import os
 import time
 import json
 from typing import Dict, List, Optional
-from seleniumwire import webdriver  # ✅ 使用selenium-wire以支持网络请求捕获
+from seleniumwire import webdriver  # Use selenium-wire to support network request capture
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 class ParallelDriverManager:
-    """并行Driver管理器"""
+    """Parallel Driver Manager"""
 
     def __init__(self, account_manager, base_url: str, chrome_options=None, target_domain: str = None):
         """
-        初始化并行Driver管理器
+        Initialize the Parallel Driver Manager
 
         Args:
-            account_manager: AccountManager实例，用于获取凭证
-            base_url: 基础URL（如 http://127.0.0.1:4281）
-            chrome_options: Chrome配置选项（可选，默认使用headless模式）
+            account_manager: AccountManager instance for obtaining credentials
+            base_url: Base URL (e.g. http://127.0.0.1:4281)
+            chrome_options: Chrome configuration options (optional, defaults to headless mode)
         """
         self.account_manager = account_manager
         self.base_url = base_url
         self.chrome_options = chrome_options
         self.driver_pool: List[webdriver.Chrome] = []
-        # 🆕 确定目标域名（优先使用传入的，否则从base_url提取）
+        # Determine target domain (prefer the passed value, otherwise extract from base_url)
         if target_domain:
             self.target_domain = target_domain
-            print(f"[ParallelDriverManager] 使用传入的目标域名: {self.target_domain}")
+            print(f"[ParallelDriverManager] Using provided target domain: {self.target_domain}")
         else:
             from urllib.parse import urlparse
             parsed = urlparse(base_url)
             self.target_domain = parsed.hostname
-            print(f"[ParallelDriverManager] 从base_url自动提取目标域名: {self.target_domain}")
+            print(f"[ParallelDriverManager] Auto-extracted target domain from base_url: {self.target_domain}")
 
-        print(f"[ParallelDriverManager] 初始化完成，基础URL: {base_url}")
+        print(f"[ParallelDriverManager] Initialization complete, base URL: {base_url}")
 
     def create_cloned_driver(self, account_id: str) -> webdriver.Chrome:
         """
-        创建一个和主driver状态一致的独立driver
+        Create an independent driver consistent with the main driver's state
 
-        核心思路：
-        1. 创建全新的driver实例（独立进程）
-        2. 访问同域页面（必须先访问才能设置cookies）
-        3. 注入cookies
-        4. 注入localStorage/sessionStorage
-        5. 刷新页面使状态生效
+        Core approach:
+        1. Create a brand new driver instance (independent process)
+        2. Visit a same-domain page (must visit before setting cookies)
+        3. Inject cookies
+        4. Inject localStorage/sessionStorage
+        5. Refresh the page to apply state
 
         Args:
-            account_id: 账户ID（从AccountManager获取凭证）
+            account_id: Account ID (obtain credentials from AccountManager)
 
         Returns:
-            配置好的独立driver实例
+            Configured independent driver instance
 
         Raises:
-            ValueError: 如果账户凭证不存在
-            Exception: 如果driver创建或配置失败
+            ValueError: If account credentials do not exist
+            Exception: If driver creation or configuration fails
         """
         print(f"\n{'='*60}")
-        print(f"[CloneDriver] 开始创建独立driver - 账户: {account_id}")
+        print(f"[CloneDriver] Starting independent driver creation - Account: {account_id}")
         print(f"{'='*60}")
 
-        # ===== 步骤1: 获取凭证 =====
+        # ===== Step 1: Get credentials =====
         credentials = self.account_manager.get_credentials(account_id)
         if not credentials:
             raise ValueError(f"No credentials found for account: {account_id}")
 
-        print(f"[CloneDriver] 凭证信息:")
-        print(f"  - Cookies: {len(credentials.get('cookies', []))} 个")
-        print(f"  - LocalStorage: {len(credentials.get('localStorage', {}))} 项")
-        print(f"  - SessionStorage: {len(credentials.get('sessionStorage', {}))} 项")
+        print(f"[CloneDriver] Credential info:")
+        print(f"  - Cookies: {len(credentials.get('cookies', []))} items")
+        print(f"  - LocalStorage: {len(credentials.get('localStorage', {}))} items")
+        print(f"  - SessionStorage: {len(credentials.get('sessionStorage', {}))} items")
 
-        # ===== 步骤2: 创建新driver（配置与主driver相同）=====
+        # ===== Step 2: Create new driver (same configuration as main driver) =====
         chrome_options = self._create_chrome_options()
 
-        print(f"[CloneDriver] 启动Chrome浏览器...")
+        print(f"[CloneDriver] Starting Chrome browser...")
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -86,7 +86,7 @@ class ParallelDriverManager:
         driver.set_script_timeout(60)
         driver.set_window_size(1920, 1080)
 
-        # 配置请求拦截器（与主driver一致）
+        # Configure request interceptor (consistent with main driver)
         def interceptor(request):
             request_url = request.url
             # if '127.0.0.1' not in request_url and 'localhost' not in request_url:
@@ -95,19 +95,19 @@ class ParallelDriverManager:
 
         driver.request_interceptor = interceptor
 
-        # 注入XSS检测脚本（与主driver一致）
+        # Inject XSS detection script (consistent with main driver)
         try:
             xss_script_path = "js/xss_xhr.js"
             if os.path.exists(xss_script_path):
                 with open(xss_script_path, "r") as f:
                     driver.add_script(f.read())
-                print(f"[CloneDriver] ✅ XSS检测脚本已注入")
+                print(f"[CloneDriver] XSS detection script injected")
         except Exception as e:
-            print(f"[CloneDriver] ⚠️ XSS脚本注入失败: {e}")
+            print(f"[CloneDriver] XSS script injection failed: {e}")
 
-        # ✅ 注入事件监听器捕获脚本（原始版本）
+        # Inject event listener capture script (original version)
         try:
-            # 原始版本：md5.js + lib.js + addeventlistener_wrapper.js
+            # Original version: md5.js + lib.js + addeventlistener_wrapper.js
             scripts = [
                 "js/md5.js",
                 "js/lib.js",
@@ -117,43 +117,43 @@ class ParallelDriverManager:
                 if os.path.exists(script_path):
                     with open(script_path, "r") as f:
                         driver.add_script(f.read())
-                    print(f"[CloneDriver] ✅ 已注入: {script_path}")
+                    print(f"[CloneDriver] Injected: {script_path}")
                 else:
-                    print(f"[CloneDriver] ⚠️ 找不到 {script_path}")
+                    print(f"[CloneDriver] Cannot find {script_path}")
 
-            print(f"[CloneDriver] ✅ 事件捕获脚本已完整注入（原始版本）")
+            print(f"[CloneDriver] Event capture scripts fully injected (original version)")
         except Exception as e:
-            print(f"[CloneDriver] ⚠️ 事件捕获脚本注入失败: {e}")
+            print(f"[CloneDriver] Event capture script injection failed: {e}")
 
-        print(f"[CloneDriver] ✅ Driver实例创建成功")
+        print(f"[CloneDriver] Driver instance created successfully")
 
-        # ===== 步骤3: 访问域名根路径（必须！）=====
-        # ⚠️ 关键：在设置cookies前必须先访问同域页面
-        # 否则driver.add_cookie()会报错："invalid cookie domain"
-        # ✅ 修复：先访问一个简单的根路径，而不是需要认证的目标页面
+        # ===== Step 3: Visit domain root path (required!) =====
+        # Key: Must visit a same-domain page before setting cookies
+        # Otherwise driver.add_cookie() will throw: "invalid cookie domain"
+        # Fix: Visit a simple root path first, not the target page requiring authentication
         from urllib.parse import urlparse
         parsed = urlparse(self.base_url)
         domain_root = f"{parsed.scheme}://{parsed.netloc}/"
 
-        print(f"[CloneDriver] 访问域名根路径: {domain_root}")
+        print(f"[CloneDriver] Visiting domain root path: {domain_root}")
         try:
             driver.get(domain_root)
-            time.sleep(0.8)  # 等待页面加载
-            print(f"[CloneDriver] ✅ 域名根路径加载完成")
+            time.sleep(0.8)  # Wait for page load
+            print(f"[CloneDriver] Domain root path loaded successfully")
         except Exception as e:
-            print(f"[CloneDriver] ⚠️ 访问域名根路径失败: {e}")
+            print(f"[CloneDriver] Failed to visit domain root path: {e}")
             driver.quit()
             raise
 
-        # # ===== 步骤4: 注入Cookies =====
+        # # ===== Step 4: Inject Cookies =====
         # cookies = credentials.get('cookies', [])
         # if cookies:
-        #     print(f"[CloneDriver] 注入 {len(cookies)} 个cookies...")
+        #     print(f"[CloneDriver] Injecting {len(cookies)} cookies...")
         #     success_count = 0
         #     for cookie in cookies:
         #         try:
-        #             # ✅ Selenium要求的cookie格式
-        #             # 移除可能导致问题的字段
+        #             # Selenium required cookie format
+        #             # Remove fields that may cause issues
         #             cookie_dict = {
         #                 'name': cookie['name'],
         #                 'value': cookie['value'],
@@ -163,11 +163,11 @@ class ParallelDriverManager:
         #                 'httpOnly': cookie.get('httpOnly', False),
         #             }
 
-        #             # 可选字段
-        #             # 可选字段兼容处理
+        #             # Optional fields
+        #             # Optional field compatibility handling
         #             if 'expiry' in cookie:
         #                 cookie_dict['expiry'] = int(cookie['expiry'])
-        #             elif 'expires' in cookie:  # ✅ 新增：兼容 CDP 格式
+        #             elif 'expires' in cookie:  # New: compatible with CDP format
         #                 cookie_dict['expiry'] = int(cookie['expires'])
         #             if 'sameSite' in cookie:
         #                 cookie_dict['sameSite'] = cookie['sameSite']
@@ -175,19 +175,19 @@ class ParallelDriverManager:
         #             driver.add_cookie(cookie_dict)
         #             success_count += 1
         #         except Exception as e:
-        #             print(f"[CloneDriver] ⚠️ Cookie注入失败 [{cookie.get('name')}]: {e}")
+        #             print(f"[CloneDriver] Cookie injection failed [{cookie.get('name')}]: {e}")
 
-        #     print(f"[CloneDriver] ✅ Cookies注入完成: {success_count}/{len(cookies)}")
+        #     print(f"[CloneDriver] Cookies injection complete: {success_count}/{len(cookies)}")
 
-        # ===== 步骤4: 注入Cookies =====
+        # ===== Step 4: Inject Cookies =====
         cookies = credentials.get('cookies', [])
         if cookies:
-            print(f"[CloneDriver] 注入 {len(cookies)} 个cookies...")
+            print(f"[CloneDriver] Injecting {len(cookies)} cookies...")
             success_count = 0
             for cookie in cookies:
                 try:
-                    # ✅ Selenium要求的cookie格式
-                    # 移除可能导致问题的字段
+                    # Selenium required cookie format
+                    # Remove fields that may cause issues
                     cookie_dict = {
                         'name': cookie['name'],
                         'value': cookie['value'],
@@ -198,45 +198,45 @@ class ParallelDriverManager:
                     }
 
                     # =================================================
-                    # 🚑【修复】增强的 Expiry 处理逻辑
+                    # [Fix] Enhanced Expiry handling logic
                     # =================================================
                     expiry = None
-                    # 优先检查 standard selenium 的 expiry 字段
+                    # First check standard selenium's expiry field
                     if 'expiry' in cookie:
                         expiry = cookie['expiry']
-                    # 其次检查 CDP 的 expires 字段
+                    # Then check CDP's expires field
                     elif 'expires' in cookie:
                         expiry = cookie['expires']
-                    
-                    # 如果存在 expiry，进行严格清洗
+
+                    # If expiry exists, perform strict cleaning
                     if expiry is not None:
-                        # 1. 如果是 Session Cookie (过期时间为 -1 或 0)，直接不设置 expiry
+                        # 1. If it's a Session Cookie (expiry is -1 or 0), don't set expiry
                         if expiry <= 0:
-                            pass 
+                            pass
                         else:
-                            # 2. 强制转换为 int (去掉小数部分)
+                            # 2. Force convert to int (remove decimal part)
                             cookie_dict['expiry'] = int(expiry)
                     # =================================================
 
-                    # 可选字段
+                    # Optional fields
                     if 'sameSite' in cookie:
                         cookie_dict['sameSite'] = cookie['sameSite']
 
                     driver.add_cookie(cookie_dict)
                     success_count += 1
                 except Exception as e:
-                    print(f"[CloneDriver] ⚠️ Cookie注入失败 [{cookie.get('name')}]: {e}")
+                    print(f"[CloneDriver] Cookie injection failed [{cookie.get('name')}]: {e}")
 
-            print(f"[CloneDriver] ✅ Cookies注入完成: {success_count}/{len(cookies)}")
+            print(f"[CloneDriver] Cookies injection complete: {success_count}/{len(cookies)}")
 
-        # ===== 步骤5: 注入LocalStorage =====
+        # ===== Step 5: Inject LocalStorage =====
         local_storage = credentials.get('localStorage', {})
         if local_storage:
-            print(f"[CloneDriver] 注入 {len(local_storage)} 个localStorage项...")
+            print(f"[CloneDriver] Injecting {len(local_storage)} localStorage items...")
             success_count = 0
             for key, value in local_storage.items():
                 try:
-                    # ✅ 转义特殊字符，避免JavaScript注入错误
+                    # Escape special characters to avoid JavaScript injection errors
                     escaped_key = json.dumps(key)
                     escaped_value = json.dumps(value)
                     driver.execute_script(
@@ -244,14 +244,14 @@ class ParallelDriverManager:
                     )
                     success_count += 1
                 except Exception as e:
-                    print(f"[CloneDriver] ⚠️ LocalStorage注入失败 [{key}]: {e}")
+                    print(f"[CloneDriver] LocalStorage injection failed [{key}]: {e}")
 
-            print(f"[CloneDriver] ✅ LocalStorage注入完成: {success_count}/{len(local_storage)}")
+            print(f"[CloneDriver] LocalStorage injection complete: {success_count}/{len(local_storage)}")
 
-        # ===== 步骤6: 注入SessionStorage =====
+        # ===== Step 6: Inject SessionStorage =====
         session_storage = credentials.get('sessionStorage', {})
         if session_storage:
-            print(f"[CloneDriver] 注入 {len(session_storage)} 个sessionStorage项...")
+            print(f"[CloneDriver] Injecting {len(session_storage)} sessionStorage items...")
             success_count = 0
             for key, value in session_storage.items():
                 try:
@@ -262,79 +262,79 @@ class ParallelDriverManager:
                     )
                     success_count += 1
                 except Exception as e:
-                    print(f"[CloneDriver] ⚠️ SessionStorage注入失败 [{key}]: {e}")
+                    print(f"[CloneDriver] SessionStorage injection failed [{key}]: {e}")
 
-            print(f"[CloneDriver] ✅ SessionStorage注入完成: {success_count}/{len(session_storage)}")
+            print(f"[CloneDriver] SessionStorage injection complete: {success_count}/{len(session_storage)}")
 
-        # ===== 步骤7: 访问目标页面（验证凭证是否生效）=====
-        print(f"[CloneDriver] 访问目标页面: {self.base_url}")
+        # ===== Step 7: Visit target page (verify credentials are effective) =====
+        print(f"[CloneDriver] Visiting target page: {self.base_url}")
         try:
             driver.get(self.base_url)
-            time.sleep(1.0)  # 等待页面加载和可能的重定向
-            print(f"[CloneDriver] ✅ 目标页面加载完成")
+            time.sleep(1.0)  # Wait for page load and possible redirects
+            print(f"[CloneDriver] Target page loaded successfully")
         except Exception as e:
-            print(f"[CloneDriver] ⚠️ 访问目标页面失败: {e}")
+            print(f"[CloneDriver] Failed to visit target page: {e}")
 
-        # ===== 步骤8: 验证登录状态 =====
+        # ===== Step 8: Verify login status =====
         try:
             current_url = driver.current_url
             current_cookies = driver.get_cookies()
 
-            print(f"\n[CloneDriver] 验证信息:")
-            print(f"  - 目标URL: {self.base_url}")
-            print(f"  - 当前URL: {current_url}")
-            print(f"  - 当前Cookies数量: {len(current_cookies)}")
+            print(f"\n[CloneDriver] Verification info:")
+            print(f"  - Target URL: {self.base_url}")
+            print(f"  - Current URL: {current_url}")
+            print(f"  - Current cookie count: {len(current_cookies)}")
 
-            # ✅ 修复：检查是否被重定向到登录页
+            # Fix: Check if redirected to login page
             is_login_redirect = 'login' in current_url.lower() and 'login' not in self.base_url.lower()
 
             if is_login_redirect:
-                print(f"  - 状态: ❌ 被重定向到登录页，凭证可能无效")
+                print(f"  - Status: Redirected to login page, credentials may be invalid")
             else:
-                # 验证URL是否基本一致（忽略hash和query参数的差异）
+                # Verify URL is basically consistent (ignore hash and query parameter differences)
                 from urllib.parse import urlparse
                 target_path = urlparse(self.base_url).path
                 current_path = urlparse(current_url).path
 
                 if target_path == current_path:
-                    print(f"  - 状态: ✅ 成功到达目标页面")
+                    print(f"  - Status: Successfully reached target page")
                 else:
-                    print(f"  - 状态: ⚠️ URL路径不一致（可能是正常重定向）")
+                    print(f"  - Status: URL path mismatch (may be a normal redirect)")
 
-            # 对比cookie名称（如果原始有cookies）
+            # Compare cookie names (if original had cookies)
             if cookies:
                 original_cookie_names = {c['name'] for c in cookies}
                 current_cookie_names = {c['name'] for c in current_cookies}
                 matched = len(original_cookie_names & current_cookie_names)
                 match_rate = (matched/len(original_cookie_names)*100) if original_cookie_names else 0
-                print(f"  - Cookie匹配率: {matched}/{len(original_cookie_names)} ({match_rate:.1f}%)")
+                print(f"  - Cookie match rate: {matched}/{len(original_cookie_names)} ({match_rate:.1f}%)")
 
-            print(f"\n[CloneDriver] ✅ Driver克隆完成！")
+            print(f"\n[CloneDriver] Driver cloning complete!")
             print(f"{'='*60}\n")
 
         except Exception as e:
-            print(f"[CloneDriver] ⚠️ 验证警告: {e}")
+            print(f"[CloneDriver] Verification warning: {e}")
 
-        # 加入driver池
+        # Add to driver pool
         self.driver_pool.append(driver)
 
         return driver
 
     def _create_chrome_options(self):
-        """创建Chrome选项配置"""
+        """Create Chrome options configuration"""
         if self.chrome_options:
-            # 如果已有配置，克隆一份并添加独立用户目录
+            # If configuration already exists, clone a copy and add independent user directory
             chrome_options = self.chrome_options
         else:
-            # 创建默认配置
+            # Create default configuration
             chrome_options = webdriver.ChromeOptions()
             chrome_options.add_argument("--headless")
             chrome_options.add_argument("--disable-web-security")
             chrome_options.add_argument("--allow-running-insecure-content")
             chrome_options.add_argument("--disable-xss-auditor")
 
-        # ✅ 关键：每个driver使用独立的临时目录，避免冲突
-        # Chrome不允许多个进程共享同一个profile
+        # Key: Each driver uses an independent temp directory to avoid conflicts
+        # Chrome does not allow multiple processes to share the same profile
         unique_id = f"{os.getpid()}_{id(chrome_options)}_{int(time.time()*1000)}"
         user_data_dir = f"/tmp/chrome_parallel_{unique_id}"
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
@@ -342,14 +342,14 @@ class ParallelDriverManager:
         return chrome_options
 
     def cleanup_all(self):
-        """清理所有创建的driver"""
-        print(f"\n[ParallelDriverManager] 清理 {len(self.driver_pool)} 个driver...")
+        """Clean up all created drivers"""
+        print(f"\n[ParallelDriverManager] Cleaning up {len(self.driver_pool)} drivers...")
         for i, driver in enumerate(self.driver_pool, 1):
             try:
                 driver.quit()
-                print(f"  [{i}/{len(self.driver_pool)}] Driver已关闭")
+                print(f"  [{i}/{len(self.driver_pool)}] Driver closed")
             except Exception as e:
-                print(f"  [{i}/{len(self.driver_pool)}] 关闭失败: {e}")
+                print(f"  [{i}/{len(self.driver_pool)}] Close failed: {e}")
 
         self.driver_pool.clear()
-        print(f"[ParallelDriverManager] ✅ 清理完成\n")
+        print(f"[ParallelDriverManager] Cleanup complete\n")

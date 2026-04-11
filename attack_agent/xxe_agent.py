@@ -10,19 +10,19 @@ from attack_agent.request_utils import extract_useful_response
 
 class XXEAgent:
     """
-    XXE测试Agent（新版）
+    XXEAgent（）
 
-    工作流程：
-    1. 调用LLM分析请求，识别XML注入点，生成带{PAYLOAD}的curl模板
-    2. 生成统一token和beacon_url（用于OOB）
-    3. 生成XXE payload列表（OOB + 通用文件读取）
-       - 去掉 CTF 专用 payload（/app/flag.txt、php://filter、XInclude 等）
-    4. 执行测试：
-       - 保存 baseline 响应
-       - 对每个 payload 执行并记录 stdout/stderr
-    5. OOB 检测（beacon 回连）
-    6. 如果 OOB 未命中，则调用 LLM 对响应做语义研判（是否存在 XXE 解析行为）
-    7. 综合结论（只返回 vulnerable / not vulnerable）
+    Workflow:
+    1. LLM，XML，{PAYLOAD}curl
+    2. tokenbeacon_url（OOB）
+    3. XXE payload（OOB + ）
+       -  CTF  payload（/app/flag.txt、php://filter、XInclude ）
+    4. ：
+       -  baseline
+       -  payload  stdout/stderr
+    5. OOB （beacon ）
+    6.  OOB ， LLM （ XXE ）
+    7. （ vulnerable / not vulnerable）
     """
 
     def __init__(self, client,
@@ -30,7 +30,7 @@ class XXEAgent:
                  xxe_judgment_prompt_path: str = "prompt/xxe_judgment.txt",
                  beacon_base: str = "http://172.17.0.1:9091/",
                  log_dir: str = "output/attack_logs/xxe",
-                 reflection_enabled: bool = True):  # ✅ 新增：反思功能开关
+                 reflection_enabled: bool = True):
         self.client = client
         self.xxe_prompt_path = Path(xxe_prompt_path)
         self.judgment_prompt_path = Path(xxe_judgment_prompt_path)
@@ -38,13 +38,12 @@ class XXEAgent:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "xxe_agent.log"
-        self.reflection_enabled = reflection_enabled  # ✅ 保存配置
+        self.reflection_enabled = reflection_enabled
 
-        # 记录所有执行的测试（用于延迟检测）
         self.execution_records: Dict[str, Dict[str, Any]] = {}  # {token: {url, evidence, ...}}
 
     def _log(self, *args):
-        """统一日志函数"""
+        """"""
         msg = " ".join(str(a) for a in args)
         try:
             with open(self._log_path, "a", encoding="utf-8") as f:
@@ -52,30 +51,28 @@ class XXEAgent:
         except Exception:
             pass
 
-    # === Prompt 加载 ===
 
     def _load_attack_prompt(self) -> str:
-        """加载用于生成curl模板的XXE攻击prompt"""
+        """curlXXEprompt"""
         return self.xxe_prompt_path.read_text(encoding="utf-8")
 
     def _load_judgment_prompt(self) -> str:
-        """加载用于XXE研判的prompt"""
+        """XXEprompt"""
         return self.judgment_prompt_path.read_text(encoding="utf-8")
 
     def _generate_token(self, length: int = 14) -> str:
-        """生成随机token"""
+        """token"""
         chars = string.ascii_letters + string.digits
         return ''.join(random.choice(chars) for _ in range(length))
 
-    # === 对外主入口 ===
 
     def test(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        测试单个请求的XXE漏洞（两阶段版本）
+        XXE（）
 
-        两阶段测试流程：
-        - Stage 1: 初始攻击（使用原始prompt）
-        - Stage 2: 反思攻击（如果Stage 1失败，基于失败分析生成新策略）
+        Two-stage test flow:
+        - Stage 1: initial attack (original prompt)
+        - Stage 2: reflection attack (if Stage 1 fails)
 
         Returns:
             {
@@ -90,24 +87,20 @@ class XXEAgent:
               "summary": str
             }
         """
-        # ========== Stage 1: 初始攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 1: Initial Attack]")
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1(request, credentials)
 
-        # 如果检测到漏洞，直接返回
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
             return result_stage1
 
-        # 如果未启用反思，直接返回Stage 1结果
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
 
-        # ========== Stage 2: 反思攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
         self._log(f"{'='*70}")
@@ -124,10 +117,10 @@ class XXEAgent:
 
     def _execute_stage1(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 1初始攻击
+        Execute Stage 1 initial attack
 
         Returns:
-            Stage 1结果字典（包含test_results和llm_analysis用于反思）
+            Stage 1 result dict (includes test_results and llm_analysis for reflection)
         """
         method = request.get("method", "GET")
         url = request.get("url", "")
@@ -148,23 +141,22 @@ class XXEAgent:
         self._log(f"    Response Body (preview): {extracted_response}")
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}\n")
 
-        # Step 1: 让LLM生成curl模板
         self._log(f"[Step 1: Calling LLM to Identify XML Injection Points]")
-        curl_templates, llm_analysis = self._generate_curl_templates(request)  # ✅ 获取LLM分析输出
+        curl_templates, llm_analysis = self._generate_curl_templates(request)
 
         if not curl_templates:
             self._log(f"[XXE] No injection points identified by LLM")
             return {
                 "vulnerable": False,
-                "stage": 1,  # ✅ 添加stage标记
+                "stage": 1,
                 "token": None,
                 "beacon_url": None,
                 "curl_templates": [],
                 "commands_executed": [],
-                "test_results": [],  # ✅ 添加test_results
+                "test_results": [],
                 "evidence": [],
                 "llm_judgment": "No XML injection points found",
-                "llm_analysis": llm_analysis,  # ✅ 保存LLM分析
+                "llm_analysis": llm_analysis,
                 "summary": "No XML injection points found"
             }
 
@@ -173,13 +165,11 @@ class XXEAgent:
             self._log(f"  {i}. {tmpl}")
         self._log("")
 
-        # Step 2: 生成统一token & beacon URL
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}\n")
 
-        # Step 3: 生成XXE payload列表（OOB + 通用文件读取；去掉CTF专用payload）
         xxe_payloads = self._build_xxe_payloads(beacon_url)
         self._log(f"[Step 3: Generated {len(xxe_payloads)} XXE Payloads]")
         for idx, (p_name, p_payload) in enumerate(xxe_payloads, 1):
@@ -187,13 +177,11 @@ class XXEAgent:
             self._log(f"  {idx}. [{p_name}] {preview}{'...' if len(p_payload) > 120 else ''}")
         self._log("")
 
-        # Step 4: 执行测试 + 记录响应（不再做规则 in-band 检测）
         self._log(f"[Step 4: Executing Tests]")
         executed_commands: List[str] = []
         evidence: List[Dict[str, str]] = []
         test_results: List[Dict[str, Any]] = []
 
-        # 先执行一个 baseline 请求（无 XXE 结构，只用普通字符串）
         # baseline_response = self._execute_baseline(curl_templates[0], credentials)
         # extracted_baseline = extract_useful_response(baseline_response, max_length=2000)
         # self._log(f"\n[Baseline Response (length={len(baseline_response)})]:")
@@ -213,7 +201,6 @@ class XXEAgent:
                 final_cmd = template.replace('{PAYLOAD}', payload)
                 final_cmd = append_credentials_to_curl(final_cmd, credentials)
 
-                # 打印完整命令（不截断）
                 self._log(f"  [Payload: {payload_name}]")
                 self._log(f"  [Command]: {final_cmd}")
 
@@ -228,7 +215,6 @@ class XXEAgent:
                     stdout, stderr = process.communicate(timeout=12)
                     executed_commands.append(final_cmd)
 
-                    # 解析HTTP状态码
                     from attack_agent.request_utils import parse_http_status_from_response
                     http_status, response_body = parse_http_status_from_response(stdout)
 
@@ -237,7 +223,6 @@ class XXEAgent:
                         self._log(f"  HTTP Status: {http_status}")
 
                     extracted_body = ""
-                    # 打印完整响应（不截断）
                     if response_body:
                         extracted_body = extract_useful_response(response_body, max_length=2000)
                         self._log("  [Response stdout (extracted)]:")
@@ -246,7 +231,6 @@ class XXEAgent:
                         self._log("  [Response stderr]:")
                         self._log("    " + stderr.replace("\n", "\n    "))
 
-                    # 记录给 LLM 分析用
                     test_results.append({
                         "payload_name": payload_name,
                         "payload": payload,
@@ -260,7 +244,6 @@ class XXEAgent:
                 except Exception as e:
                     self._log(f"  ✗ Exec error: {e}")
 
-        # Step 5: OOB检测
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         oob = check_beacon_detection(token)
         if oob:
@@ -269,15 +252,12 @@ class XXEAgent:
         else:
             self._log("  ✗ No OOB beacon detected")
 
-        # Step 6: LLM 语义研判（只在 OOB 未命中的情况下真正需要，但这里统一调用并记录）
         self._log(f"\n[Step 6: LLM Semantic Judgment]")
         llm_judgment = self._llm_judge_responses(baseline_response, test_results)
         self._log(f"  LLM Judgment (preview): {llm_judgment[:200]}...")
 
-        # 综合结论（只返回 True/False）
         vulnerable = self._determine_vulnerability(oob, llm_judgment)
 
-        # 生成摘要
         summary = self._generate_summary(vulnerable, oob, llm_judgment, beacon_url)
 
         self._log(f"\n{'='*70}")
@@ -289,7 +269,6 @@ class XXEAgent:
         self._log(f"  Summary: {summary}")
         self._log(f"{'='*70}\n")
 
-        # 记录执行信息（用于延迟检测）
         self.execution_records[token] = {
             "token": token,
             "beacon_url": beacon_url,
@@ -300,27 +279,26 @@ class XXEAgent:
 
         return {
             "vulnerable": vulnerable,  # True / False
-            "stage": 1,  # ✅ 标记为Stage 1
+            "stage": 1,
             "beacon_url": beacon_url,
             "token": token,
-            "curl_templates": curl_templates,  # ✅ 保存用于反思
+            "curl_templates": curl_templates,
             "commands_executed": executed_commands,
-            "test_results": test_results,  # ✅ 保存用于反思
+            "test_results": test_results,
             "evidence": evidence,
             "llm_judgment": llm_judgment,
-            "llm_analysis": llm_analysis,  # ✅ 保存LLM分析输出
+            "llm_analysis": llm_analysis,
             "summary": summary,
             "note": f"Stage 1 - Immediate detection: {'XXE confirmed' if vulnerable else 'Pending finalize'}"
         }
 
-    # === 生成 curl 模板（沿用你原来的逻辑） ===
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> tuple:
         """
-        调用LLM生成带{PAYLOAD}的curl模板
+        LLM{PAYLOAD}curl
 
         Returns:
-            (curl模板列表, LLM完整输出) 元组
+            Returns (curl template list, full LLM output) tuple
         """
         sys_prompt = self._load_attack_prompt()
         original_response = str(request.get('response_body', '')) or ''
@@ -359,17 +337,17 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log("~" * 70 + "\n")
 
             templates = self._parse_curl_templates(llm_output)
-            return templates, llm_output  # ✅ 返回元组
+            return templates, llm_output
 
         except Exception as e:
             self._log(f"[XXE] LLM call failed: {e}")
             import traceback
             self._log(traceback.format_exc())
-            return [], ""  # ✅ 错误时返回空列表和空字符串
+            return [], ""
 
     def _parse_curl_templates(self, llm_output: str) -> List[str]:
         """
-        从LLM输出中提取curl模板
+        LLMcurl
         """
         templates: List[str] = []
         lines = llm_output.splitlines()
@@ -381,14 +359,12 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                 break
 
         if commands_idx == -1:
-            # 容错：直接扫描所有行
             for line in lines:
                 l = line.strip()
                 if 'curl' in l and '{PAYLOAD}' in l:
                     templates.append(l.strip('`').strip())
             return templates
 
-        # 从Commands:行开始提取
         for i in range(commands_idx + 1, len(lines)):
             line = lines[i].strip()
             if not line or line.startswith('```'):
@@ -400,22 +376,20 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _ensure_xml_content_type(self, cmd: str) -> str:
         """
-        若模板中未设置Content-Type，则补充application/xml
+        Content-Type，application/xml
         """
         if "-H 'Content-Type:" in cmd or '-H "Content-Type:' in cmd:
             return cmd
         return f"{cmd} -H 'Content-Type: application/xml'"
 
-    # === XXE payload 构造（去掉 CTF 专用 payload） ===
 
     def _build_xxe_payloads(self, beacon_url: str) -> List[Tuple[str, str]]:
         """
-        生成XXE payload列表（包括OOB和通用文件读取）
-        返回: [(payload_name, payload_xml), ...]
+        XXE payload（OOB）
+        : [(payload_name, payload_xml), ...]
         """
         payloads: List[Tuple[str, str]] = []
 
-        # OOB：外部实体（内联）
         payloads.append((
             "oob_inline_entity",
             f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -425,7 +399,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 <root>&xxe;</root>"""
         ))
 
-        # OOB：参数实体加载远程DTD
         payloads.append((
             "oob_external_dtd",
             f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -436,7 +409,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 <root>test</root>"""
         ))
 
-        # OOB：使用PUBLIC
         payloads.append((
             "oob_public_doctype",
             f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -444,7 +416,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 <root>public-test</root>"""
         ))
 
-        # In-band：文件读取（Linux /etc/passwd）
         payloads.append((
             "file_read_etc_passwd",
             """<?xml version="1.0"?>
@@ -455,7 +426,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 <foo>&xxe;</foo>"""
         ))
 
-        # In-band：文件读取（Linux /etc/hostname）
         payloads.append((
             "file_read_etc_hostname",
             """<?xml version="1.0"?>
@@ -466,7 +436,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 <foo>&xxe;</foo>"""
         ))
 
-        # In-band：文件读取（Windows win.ini）
         payloads.append((
             "file_read_win_ini",
             """<?xml version="1.0"?>
@@ -477,18 +446,15 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 <foo>&xxe;</foo>"""
         ))
 
-        # ✅ 已去掉 CTF 专用 payload：/app/flag.txt、XInclude、php://filter 等
 
         return payloads
 
-    # === Baseline 请求 ===
 
     # def _execute_baseline(self, template: str, credentials: Dict[str, Any]) -> str:
     #     """
-    #     执行baseline请求（无XXE结构）作为对照
+    #     baseline（XXE）
     #     """
     #     try:
-    #         # 用一个无害的普通字符串替换{PAYLOAD}
     #         baseline_cmd = template.replace('{PAYLOAD}', 'baseline_test')
     #         baseline_cmd = append_credentials_to_curl(baseline_cmd, credentials)
 
@@ -505,17 +471,15 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
     #         self._log(f"  ⚠️ Baseline request failed: {e}")
     #         return ""
 
-    # === LLM 研判 ===
 
     def _llm_judge_responses(self, baseline: str, test_results: List[Dict[str, Any]]) -> str:
         """
-        调用LLM进行语义研判：
-        - 去重：按response前若干字符去重
-        - 截断：最多保留前15个结果、每个response_preview截到2000字符
+        LLM：
+        - ：response
+        - ：15、response_preview2000
         """
         judgment_prompt = self._load_judgment_prompt()
 
-        # 去重：按照 response[:2000] 简单去重
         seen = {}
         for r in test_results:
             resp = r["response"] or ""
@@ -530,12 +494,11 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         for r in deduped_results:
             results_summary.append({
                 "payload_name": r.get("payload_name"),
-                "response_preview": extract_useful_response(r.get("response") or "", max_length=2000),  # ✅ 使用智能提取
+                "response_preview": extract_useful_response(r.get("response") or "", max_length=2000),
                 "response_length": len(r.get("response") or ""),
                 "stderr_preview": (r.get("stderr") or "")[:500] if r.get("stderr") else None,
             })
 
-        # ✅ 使用智能提取处理baseline响应
         baseline_extracted = extract_useful_response(baseline, max_length=2000)
 
         user_input = f"""BASELINE RESPONSE (length={len(baseline)}):
@@ -581,9 +544,9 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
 
     def _extract_llm_judgment_flag(self, llm_judgment: str) -> str:
         """
-        从 LLM 输出中提取最终 Judgment 标记（只看最后一次出现的 judgment）.
+         LLM  Judgment （ judgment）.
 
-        返回:
+        :
             "vulnerable" / "not vulnerable" / None
         """
         if not llm_judgment:
@@ -594,14 +557,11 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
         if idx == -1:
             return None
 
-        # 从最后一个 "judgment" 开始往后截取
         tail = lower[idx:]
 
-        # 先看 "not vulnerable"，避免子串冲突
         if "not vulnerable" in tail:
             return "not vulnerable"
 
-        # 再看 "vulnerable"
         if "vulnerable" in tail:
             return "vulnerable"
 
@@ -609,11 +569,11 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
 
     def _determine_vulnerability(self, oob: bool, llm_judgment: str) -> bool:
         """
-        综合判定是否存在XXE漏洞（只返回True/False）
+        XXE（True/False）
 
-        规则：
-        - OOB命中 → True（最高置信度）
-        - 否则根据 LLM 输出中的 Judgment 决定
+        ：
+        - OOB → True（）
+        -  LLM  Judgment
         """
         if oob:
             return True
@@ -624,13 +584,12 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
         if flag == "not vulnerable":
             return False
 
-        # 没抽到 Judgment（LLM 输出不规范或失败），保守认为未发现漏洞
         return False
 
 
     def _generate_summary(self, vulnerable: bool, oob: bool, llm_judgment: str, beacon_url: str) -> str:
         """
-        生成测试摘要
+
         """
         if oob and vulnerable:
             return f"XXE vulnerable (OOB beacon detected): {beacon_url}"
@@ -643,20 +602,17 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
             return "No XXE evidence found (LLM judgment failed, defaulting to not vulnerable)"
         return "No XXE evidence found (LLM assessment)"
 
-    # ========== Stage 2: 反思攻击方法 ==========
 
     def _execute_stage2(self, request: Dict[str, Any], credentials: Dict[str, Any],
                        stage1_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 2反思攻击（XXE版）
+        Stage 2（XXE）
 
-        复用SSTI的反思逻辑，针对XXE场景调整
+        SSTI，XXE
         """
-        # 1. 构建反思suffix
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix(stage1_context)
 
-        # 2. 调用LLM生成新模板
         self._log(f"[Step 1: Generating Reflection Templates via LLM]")
         new_templates, llm_reflection_output = self._generate_curl_templates_with_reflection(
             request=request,
@@ -674,14 +630,12 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
             self._log(f"  {i}. {tmpl}")
         self._log(f"")
 
-        # 3. 生成新的token
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated New Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}")
         self._log(f"")
 
-        # 4. 生成XXE payload列表
         xxe_payloads = self._build_xxe_payloads(beacon_url)
         self._log(f"[Step 3: Generated {len(xxe_payloads)} XXE Payloads]")
         for idx, (p_name, p_payload) in enumerate(xxe_payloads, 1):
@@ -689,13 +643,11 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
             self._log(f"  {idx}. [{p_name}] {preview}{'...' if len(p_payload) > 120 else ''}")
         self._log(f"")
 
-        # 5. 执行测试
         self._log(f"[Step 4: Executing Tests]")
         executed_commands: List[str] = []
         test_results: List[Dict[str, Any]] = []
         evidence: List[Dict[str, str]] = []
 
-        # 先执行baseline请求
         # baseline_response = self._execute_baseline(new_templates[0], credentials)
         # extracted_baseline = extract_useful_response(baseline_response, max_length=2000)
         # self._log(f"\n[Baseline Response (length={len(baseline_response)})]:")
@@ -759,7 +711,6 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
                 except Exception as e:
                     self._log(f"  ✗ Exec error: {e}")
 
-        # 6. OOB检测
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         oob = check_beacon_detection(token)
         if oob:
@@ -768,15 +719,12 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
         else:
             self._log("  ✗ No OOB beacon detected")
 
-        # 7. LLM语义研判
         self._log(f"\n[Step 6: LLM Semantic Judgment]")
         llm_judgment = self._llm_judge_responses(baseline_response, test_results)
         self._log(f"  LLM Judgment (preview): {llm_judgment[:200]}...")
 
-        # 综合结论
         vulnerable = self._determine_vulnerability(oob, llm_judgment)
 
-        # 生成摘要
         summary = self._generate_summary(vulnerable, oob, llm_judgment, beacon_url)
 
         self._log(f"\n{'='*70}")
@@ -788,7 +736,6 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
         self._log(f"  Summary: {summary}")
         self._log(f"{'='*70}\n")
 
-        # 8. 记录执行信息
         method = request.get("method", "GET")
         url = request.get("url", "")
         self.execution_records[token] = {
@@ -799,7 +746,6 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
             "evidence": evidence
         }
 
-        # ✅ 在 return 语句中添加 stage1_results
         return {
             "vulnerable": vulnerable,
             "stage": 2,
@@ -813,7 +759,6 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
             "llm_reflection_output": llm_reflection_output,
             "reflection_analysis": reflection_suffix,
             "summary": summary,
-            # ✅ 新增：保留Stage 1的完整结果
             "stage1_results": {
                 "test_results": stage1_context.get("test_results", []),
                 "curl_templates": stage1_context.get("curl_templates", []),
@@ -827,7 +772,7 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
 
     def _build_reflection_suffix(self, stage1_context: Dict[str, Any]) -> str:
         """
-        构建XXE反思suffix
+        XXEsuffix
         """
         templates = stage1_context.get("curl_templates", [])
         test_results = stage1_context.get("test_results", [])
@@ -838,13 +783,11 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
         suffix += "STAGE 1 RESULTS (Failed Detection)\n"
         suffix += "="*70 + "\n\n"
 
-        # 1. 之前生成的模板
         suffix += "Previous Templates Generated:\n"
         for i, tmpl in enumerate(templates, 1):
             suffix += f"{i}. {tmpl}\n"
         suffix += "\n"
 
-        # 2. 执行结果
         suffix += "Execution Results:\n"
         suffix += "-"*70 + "\n"
 
@@ -864,11 +807,9 @@ Remember: even parser error messages about external entities/DOCTYPE should be c
 
         suffix += "\n"
 
-        # 3. 结果说明
         suffix += f"Result: {'NOT VULNERABLE' if vulnerable is False else 'UNCERTAIN/PENDING'}\n"
         suffix += "\n"
 
-        # 4. 反思任务说明
         suffix += "="*70 + "\n"
         suffix += "YOUR TASK FOR STAGE 2 - REFLECTION\n"
         suffix += "="*70 + "\n\n"
@@ -916,7 +857,7 @@ Commands:
     def _generate_curl_templates_with_reflection(self, request: Dict[str, Any],
                                                  reflection_suffix: str) -> tuple:
         """
-        调用LLM生成反思后的新XXE模板
+        LLMXXE
         """
         sys_prompt = self._load_attack_prompt()
         original_response = str(request.get('response_body', '')) or ''
@@ -933,7 +874,6 @@ Response Body (extracted): {extracted_response}
 Please analyze this request and generate curl command templates with {{PAYLOAD}} placeholder for XXE testing.
 """
 
-        # ✅ Append反思内容
         user_prompt += reflection_suffix
 
         self._log(f"\n[LLM INPUT - Reflection Prompt]:")
@@ -969,12 +909,11 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _sample_test_results(self, test_results: List[Dict], max_samples: int = 10) -> List[Dict]:
         """
-        从测试结果中采样（去重 + 采样）
+        （ + ）
         """
         if not test_results:
             return []
 
-        # 按响应哈希去重
         seen = {}
         for r in test_results:
             resp = r.get("response", "")
@@ -984,17 +923,15 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         deduped = list(seen.values())
 
-        # 采样
         if len(deduped) <= max_samples:
             return deduped
         else:
             import random
             return random.sample(deduped, max_samples)
 
-    # === 延迟检查 OOB 结果（沿用原逻辑） ===
 
     def check_final_results(self) -> Dict[str, bool]:
-        """检查最终结果（统一延迟检测）"""
+        """（）"""
         self._log(f"\n{'='*70}")
         self._log(f"[XXE] Checking Final Results")
         self._log(f"{'='*70}\n")

@@ -4,34 +4,34 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple, Iterable
 from pathlib import Path
 import json
-import threading  # 🆕 线程安全
+import threading  # Thread safety
 from app_info.models import PageInfo, Edge, TaskRunTrace
 from urllib.parse import urlparse
 
 
 class WebAppStore:
     """
-    Web 应用信息存储（🆕 线程安全版本）
-    - 节点（PageInfo）
-    - 边（Edge）
-    - 任务运行轨迹（TaskRunTrace）
-    - 可选导出图快照（graph.json / mermaid）
-    持久化策略：内存为主，追加 JSONL 便于复盘/可视化
+    Web application information store (thread-safe version)
+    - Nodes (PageInfo)
+    - Edges (Edge)
+    - Task run traces (TaskRunTrace)
+    - Optional graph snapshot export (graph.json / mermaid)
+    Persistence strategy: primarily in-memory, with JSONL append for review/visualization
     """
 
     def __init__(self, root_dir: str = "output/webapp_store"):
         self.root = Path(root_dir)
         self.root.mkdir(parents=True, exist_ok=True)
 
-        # 内存态
+        # In-memory state
         self.pages: Dict[str, PageInfo] = {}         # url -> PageInfo
-        self.edges: List[Edge] = []                  # 边的顺序列表（便于回放）
-        self._edge_keys: set[Tuple[str, str, int, str, str]] = set()  # 去重键 (from,to,action_id,via_repr,jump_kind)
+        self.edges: List[Edge] = []                  # Ordered list of edges (for replay)
+        self._edge_keys: set[Tuple[str, str, int, str, str]] = set()  # Dedup key (from,to,action_id,via_repr,jump_kind)
 
-        # 🆕 线程安全：保护共享数据结构
-        self._lock = threading.RLock()  # 使用递归锁，支持同一线程多次获取
+        # Thread safety: protect shared data structures
+        self._lock = threading.RLock()  # Use reentrant lock, supports same thread acquiring multiple times
 
-        # 落盘路径
+        # Persistence paths
         self.pages_jsonl = self.root / "pages.jsonl"
         self.edges_jsonl = self.root / "edges.jsonl"
         self.graph_json = self.root / "graph.json"
@@ -43,12 +43,12 @@ class WebAppStore:
     # Pages
     # ---------------------------------------------------------------------
     def has_page(self, url: str) -> bool:
-        """严格按 URL（含 query）判断是否已有该页面节点"""
+        """Strictly check by URL (including query) whether the page node exists"""
         return url in self.pages
 
     def has_main_page(self, url: str) -> bool:
         """
-        忽略 query 判断是否已有“主页面”（用于避免 query 变体造成重复页面）
+        Ignore query to check if the "main page" already exists (to avoid duplicate pages from query variants)
         """
         cleaned_url = url.split('?', 1)[0]
         for page_url in self.pages:
@@ -61,8 +61,8 @@ class WebAppStore:
 
     def add_page(self, info: PageInfo, persist: bool = True) -> None:
         """
-        直接写入（覆盖同 URL 的旧值）；一般建议用 upsert_page() 做合并。
-        🆕 线程安全版本
+        Write directly (overwrite old value for same URL); generally recommended to use upsert_page() for merging.
+        Thread-safe version
         """
         with self._lock:
             self.pages[info.url] = info
@@ -78,11 +78,11 @@ class WebAppStore:
         persist: bool = True,
     ) -> None:
         """
-        插入或合并页面信息（🆕 线程安全版本）
+        Insert or merge page information (thread-safe version)
 
-        改进：
-        - 支持 logic_tasks 的合并
-        - persist=True 时，先清理旧记录再追加（可选，防止JSONL膨胀）
+        Improvements:
+        - Supports merging of logic_tasks
+        - When persist=True, cleans old records before appending (optional, prevents JSONL bloat)
         """
         with self._lock:
             if info.url not in self.pages:
@@ -95,13 +95,13 @@ class WebAppStore:
             abstract_page = info.abstract_page or old.abstract_page
             description = info.description or old.description
 
-            # ✅ 新增：logic_tasks 直接覆盖（由规划agent管理）
+            # New: logic_tasks directly overwritten (managed by planning agent)
             logic_tasks = info.logic_tasks if info.logic_tasks else old.logic_tasks
 
-            # ✅ 保留 actions_mapping（修复任务执行时找不到映射的问题）
+            # Preserve actions_mapping (fix: mapping not found during task execution)
             actions_mapping = info.actions_mapping if info.actions_mapping else old.actions_mapping
 
-            # 🆕 保留 event_mapping（事件映射）
+            # Preserve event_mapping
             event_mapping = info.event_mapping if info.event_mapping else old.event_mapping
 
             if merge_outgoing_links:
@@ -136,7 +136,7 @@ class WebAppStore:
                 network_requests=merged_reqs,
                 logic_tasks=logic_tasks,
                 actions_mapping=actions_mapping,
-                event_mapping=event_mapping  # 🆕 添加事件映射
+                event_mapping=event_mapping  # Add event mapping
             )
             self.pages[info.url] = updated
 
@@ -154,25 +154,25 @@ class WebAppStore:
         return (e.from_url, e.to_url, e.via_action_id, e.via_repr, e.jump_kind)
 
     def has_to_url(self, to_url: str) -> bool:
-        """是否已有指向该 to_url 的任何边（你原来 has_edge 的语义）"""
+        """Whether there is any edge pointing to this to_url (the original has_edge semantics)"""
         return any(e.to_url == to_url for e in self.edges)
 
     def has_edge_pair(self, from_url: str, to_url: str) -> bool:
-        """严格判断是否已存在 from→to 的边"""
+        """Strictly check if a from->to edge already exists"""
         return any(e.from_url == from_url and e.to_url == to_url for e in self.edges)
 
-    # 为了向后兼容：保留 has_edge，并保持你原先“只看 to_url”的行为
+    # For backward compatibility: keep has_edge with original "only check to_url" behavior
     def has_edge(self, from_url: str, to_url: str) -> bool:
         """
-        兼容旧逻辑：仅根据 to_url 判断是否“出现过该目标 URL”
-        如需严格判断是否已存在 from→to，请使用 has_edge_pair()
+        Backward compatible: only checks to_url to determine if "the target URL has appeared"
+        For strict from->to check, use has_edge_pair()
         """
         return self.has_to_url(to_url)
 
     def add_edge(self, edge: Edge, persist: bool = True) -> bool:
         """
-        加入一条边；若重复（按 from,to,action_id,via_repr,jump_kind），则忽略并返回 False
-        🆕 线程安全版本
+        Add an edge; if duplicate (by from,to,action_id,via_repr,jump_kind), ignore and return False
+        Thread-safe version
         """
         with self._lock:
             k = self._edge_key(edge)
@@ -190,11 +190,11 @@ class WebAppStore:
         return self.edges
 
     # ---------------------------------------------------------------------
-    # Graph Export (可选)
+    # Graph Export (optional)
     # ---------------------------------------------------------------------
     def export_graph(self) -> None:
         """
-        导出一个包含更多节点属性的快照（非必须，仅用于可视化或给其他 agent 冷启动）
+        Export a snapshot with more node attributes (not required, only for visualization or cold-starting other agents)
         """
         nodes = []
         for url, p in self.pages.items():
@@ -220,10 +220,10 @@ class WebAppStore:
 
     def export_mermaid(self, max_nodes: int = 500) -> None:
         """
-        快速导出 Mermaid 流程图（仅结构，不含属性），便于 README/问题复现
+        Quick export of Mermaid flowchart (structure only, no attributes), for README/issue reproduction
         """
         lines = ["graph LR"]
-        # 节点限额避免极大图导致渲染卡顿
+        # Node limit to avoid rendering lag for very large graphs
         count = 0
         for e in self.edges:
             lines.append(f'    "{e.from_url}" -- "{e.via_repr or e.jump_kind}" --> "{e.to_url}"')
@@ -244,7 +244,7 @@ class WebAppStore:
     # Helpers
     # ---------------------------------------------------------------------
     def summary(self) -> Dict[str, int]:
-        """返回一个轻量摘要，便于日志打印或监控"""
+        """Return a lightweight summary for logging or monitoring"""
         return {
             "pages": len(self.pages),
             "edges": len(self.edges),
@@ -252,7 +252,7 @@ class WebAppStore:
         }
 
     def clear_memory(self) -> None:
-        """仅清理内存中的图（不删除已落盘文件）"""
+        """Only clear the in-memory graph (does not delete persisted files)"""
         self.pages.clear()
         self.edges.clear()
         self._edge_keys.clear()

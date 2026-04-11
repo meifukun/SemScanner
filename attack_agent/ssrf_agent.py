@@ -1,5 +1,5 @@
 """
-SSRF Agent - 完整版（使用LLM生成注入点）
+SSRF Agent - （LLM）
 """
 
 from typing import Dict, Any, List
@@ -14,32 +14,31 @@ from config.llm_config import get_model_name, get_temperature
 
 class SSRFAgent:
     """
-    SSRF测试Agent（完整实现）
+    SSRFAgent（）
 
-    工作流程：
-    1. 调用LLM分析请求，识别SSRF注入点
-    2. LLM生成带{PAYLOAD}占位符的curl命令模板
-    3. 生成统一的token（用于beacon检测）
-    4. 生成SSRF payload列表（包含beacon URL + token）
-    5. 用实际payload替换{PAYLOAD}占位符
-    6. 执行测试并记录token
-    7. 检查beacon服务器日志确认漏洞
+    Workflow:
+    1. LLM，SSRF
+    2. LLM generates curl command templates with {PAYLOAD} placeholder
+    3. token（beacon）
+    4. SSRF payload（beacon URL + token）
+    5. payload{PAYLOAD}
+    6. token
+    7. beacon
     """
 
     def __init__(self, client,
                  prompt_path: str = "prompt/ssrf_attack.txt",
                  beacon_base: str = "http://172.17.0.1:9091/",
                  log_dir: str = "output/attack_logs/ssrf",
-                 reflection_enabled: bool = True):  # ✅ 新增：反思功能开关
+                 reflection_enabled: bool = True):
         self.client = client
         self.prompt_path = Path(prompt_path)
         self.beacon_base = beacon_base.rstrip("/") + "/"
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "ssrf_agent.log"
-        self.reflection_enabled = reflection_enabled  # ✅ 保存配置
+        self.reflection_enabled = reflection_enabled
 
-        # ✅ 新增：记录所有执行的测试（用于延迟检测）
         self.execution_records: Dict[str, Dict[str, Any]] = {}  # {token: {url, payloads, ...}}
 
     def _log(self, *args):
@@ -51,30 +50,30 @@ class SSRFAgent:
             pass
 
     def _load_prompt_template(self) -> str:
-        """加载SSRF prompt模板"""
+        """SSRF prompt"""
         return self.prompt_path.read_text(encoding="utf-8")
 
     def _generate_token(self, length: int = 12) -> str:
-        """生成随机token"""
+        """token"""
         chars = string.ascii_letters + string.digits
         return ''.join(random.choice(chars) for _ in range(length))
 
     def test(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        测试单个请求的SSRF（两阶段版本）
+        SSRF（）
 
-        两阶段测试流程：
-        - Stage 1: 初始攻击（使用原始prompt）
-        - Stage 2: 反思攻击（如果Stage 1失败，基于失败分析生成新策略）
+        Two-stage test flow:
+        - Stage 1: initial attack (original prompt)
+        - Stage 2: reflection attack (if Stage 1 fails)
 
         Args:
-            request: 完整请求数据（包含response）
-            credentials: 账户凭证
+            request: full request data (including response)
+            credentials: account credentials
 
         Returns:
             {
                 "vulnerable": True/False/None,
-                "stage": 1 or 2,  # 表示在哪个阶段检测到/确认
+                "stage": 1 or 2,  # /
                 "token": str,
                 "beacon_url": str,
                 "curl_templates": List[str],
@@ -82,24 +81,20 @@ class SSRFAgent:
                 ...
             }
         """
-        # ========== Stage 1: 初始攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 1: Initial Attack]")
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1(request, credentials)
 
-        # 如果检测到漏洞，直接返回
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
             return result_stage1
 
-        # 如果未启用反思，直接返回Stage 1结果
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
 
-        # ========== Stage 2: 反思攻击 ==========
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
         self._log(f"{'='*70}")
@@ -116,7 +111,7 @@ class SSRFAgent:
 
     def _execute_stage1(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 1初始攻击（原test方法逻辑）
+        Execute Stage 1 initial attack（test）
 
         Returns:
             {
@@ -124,10 +119,10 @@ class SSRFAgent:
                 "stage": 1,
                 "token": str,
                 "beacon_url": str,
-                "curl_templates": List[str],  # ✅ 保存用于反思
+                "curl_templates": List[str],  # ✅
                 "commands_executed": List[str],
-                "test_results": List[Dict],  # ✅ 保存用于反思
-                "llm_analysis": str,  # ✅ 保存LLM分析输出
+                "test_results": List[Dict],  # ✅
+                "llm_analysis": str,
                 ...
             }
         """
@@ -151,21 +146,20 @@ class SSRFAgent:
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}")
         self._log(f"")
 
-        # ========== 第一步：调用LLM生成curl模板 ==========
         self._log(f"[Step 1: Calling LLM to Identify Injection Points]")
-        curl_templates, llm_analysis = self._generate_curl_templates(request)  # ✅ 获取LLM分析输出
+        curl_templates, llm_analysis = self._generate_curl_templates(request)
 
         if not curl_templates:
             self._log(f"[SSRF] No injection points identified by LLM")
             return {
                 "vulnerable": False,
-                "stage": 1,  # ✅ 添加stage标记
+                "stage": 1,
                 "token": None,
                 "beacon_url": None,
                 "curl_templates": [],
                 "commands_executed": [],
-                "test_results": [],  # ✅ 添加test_results
-                "llm_analysis": llm_analysis,  # ✅ 保存LLM分析
+                "test_results": [],
+                "llm_analysis": llm_analysis,
                 "note": "No injection points found"
             }
 
@@ -174,41 +168,35 @@ class SSRFAgent:
             self._log(f"  {i}. {tmpl}")
         self._log(f"")
 
-        # ========== 第二步：生成统一的token ==========
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated Unified Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}")
         self._log(f"")
 
-        # ========== 第三步：生成SSRF payload列表 ==========
         ssrf_payloads = self._get_payloads(beacon_url)
         self._log(f"[Step 3: Generated {len(ssrf_payloads)} SSRF Payloads]:")
         for i, payload in enumerate(ssrf_payloads, 1):
             self._log(f"  {i}. {payload}")
         self._log(f"")
 
-        # ========== 第四步：执行测试 ==========
         self._log(f"[Step 4: Executing Tests]")
         executed_commands = []
-        test_results = []  # ✅ 保存测试结果用于反思
+        test_results = []
 
         for template in curl_templates:
             self._log(f"\n[Testing Template]: {template}")
 
             for payload in ssrf_payloads:
-                # 替换{PAYLOAD}为实际payload
                 if '{PAYLOAD}' not in template:
                     self._log(f"  ⚠️  Template missing {{PAYLOAD}} placeholder, skipping")
                     continue
 
                 final_command = template.replace('{PAYLOAD}', payload)
 
-                # 追加凭证
                 final_command = append_credentials_to_curl(final_command, credentials)
 
                 self._log(f"  [Payload]: {payload}")
-                # 打印完整命令（不截断）
                 self._log(f"  [Command]: {final_command}")
 
                 try:
@@ -221,7 +209,6 @@ class SSRFAgent:
                     )
                     stdout, stderr = process.communicate(timeout=10)
 
-                    # 解析HTTP状态码
                     from attack_agent.request_utils import parse_http_status_from_response
                     http_status, response_body = parse_http_status_from_response(stdout)
 
@@ -235,7 +222,6 @@ class SSRFAgent:
                         self._log(f"  Stderr: {stderr}")
                     executed_commands.append(final_command)
 
-                    # ✅ 保存测试结果
                     test_results.append({
                         "template": template,
                         "payload": payload,
@@ -248,7 +234,6 @@ class SSRFAgent:
 
                 except subprocess.TimeoutExpired:
                     self._log(f"  ✗ Timeout after 10 seconds")
-                    # ✅ 保存超时结果
                     test_results.append({
                         "template": template,
                         "payload": payload,
@@ -257,7 +242,6 @@ class SSRFAgent:
                     })
                 except Exception as e:
                     self._log(f"  ✗ Failed: {e}")
-                    # ✅ 保存失败结果
                     test_results.append({
                         "template": template,
                         "payload": payload,
@@ -269,7 +253,6 @@ class SSRFAgent:
         self._log(f"  Commands Executed: {len(executed_commands)}")
         self._log(f"")
 
-        # ✅ 记录执行信息（用于延迟检测）
         self.execution_records[token] = {
             "token": token,
             "beacon_url": beacon_url,
@@ -279,7 +262,6 @@ class SSRFAgent:
             "commands_executed": executed_commands
         }
 
-        # ========== 第五步：检查beacon日志（立即检测）==========
         self._log(f"[Step 5: Checking Beacon Detection (immediate)]")
         vulnerable = check_beacon_detection(token)
 
@@ -301,27 +283,26 @@ class SSRFAgent:
         self._log(f"{'='*70}\n")
 
         return {
-            "vulnerable": vulnerable if vulnerable else None,  # ✅ None表示pending
-            "stage": 1,  # ✅ 标记为Stage 1
+            "vulnerable": vulnerable if vulnerable else None,
+            "stage": 1,
             "beacon_url": beacon_url,
             "token": token,
-            "curl_templates": curl_templates,  # ✅ 保存用于反思
+            "curl_templates": curl_templates,
             "commands_executed": executed_commands,
-            "test_results": test_results,  # ✅ 保存用于反思
-            "llm_analysis": llm_analysis,  # ✅ 保存LLM分析输出
+            "test_results": test_results,
+            "llm_analysis": llm_analysis,
             "note": f"Stage 1 - Immediate detection: {'SSRF confirmed' if vulnerable else 'Pending finalize'}"
         }
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> tuple:
         """
-        调用LLM生成带{PAYLOAD}占位符的curl模板
+        Call LLM to generate curl templates with {PAYLOAD} placeholder
 
         Returns:
-            (curl模板列表, LLM完整输出) 元组
+            Returns (curl template list, full LLM output) tuple
         """
         sys_prompt = self._load_prompt_template()
 
-        # 格式化请求信息
         original_response = str(request.get('response_body', ''))
         extracted_response = extract_useful_response(original_response, max_length=2000)
         user_prompt = f"""REQUEST INFORMATION:
@@ -356,31 +337,28 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 解析Commands部分
             templates = self._parse_curl_templates(llm_output)
 
-            return templates, llm_output  # ✅ 返回元组
+            return templates, llm_output
 
         except Exception as e:
             self._log(f"[SSRF] LLM call failed: {e}")
             import traceback
             self._log(traceback.format_exc())
-            return [], ""  # ✅ 错误时返回空列表和空字符串
+            return [], ""
 
     def _parse_curl_templates(self, llm_output: str) -> List[str]:
         """
-        从LLM输出中提取curl模板（改进版，兼容多种LLM输出格式）
+        Extract curl templates from LLM output (multi-format compatible)
 
         Returns:
-            curl模板列表
+            Returns list of curl templates
         """
         templates = []
         lines = llm_output.splitlines()
 
-        # 查找 "Commands" 关键词所在行的索引
         commands_line_idx = -1
         for i, line in enumerate(lines):
-            # 简单判断：行中是否包含 "command:" (不区分大小写)
             line_lower = line.lower()
             if 'command:' in line_lower or 'commands:' in line_lower:
                 commands_line_idx = i
@@ -390,21 +368,16 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"[Warning] No Commands section found in LLM output")
             return []
 
-        # 从Commands行之后开始解析
         for i in range(commands_line_idx + 1, len(lines)):
             line = lines[i].strip()
 
-            # 跳过空行
             if not line:
                 continue
 
-            # 跳过markdown代码块标记
             if line.startswith('```'):
                 continue
 
-            # 检查是否包含 curl 关键词和 {PAYLOAD} 占位符
             if 'curl' in line and '{PAYLOAD}' in line:
-                # 清理可能的markdown格式
                 cleaned = line.lstrip('`').rstrip('`').strip()
                 templates.append(cleaned)
 
@@ -415,54 +388,46 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _get_payloads(self, beacon_url: str) -> List[str]:
         """
-        生成SSRF payload列表
+        SSRF payload
 
         Args:
-            beacon_url: 回调URL（包含token）
+            beacon_url: URL（token）
 
         Returns:
-            payload列表
+            payload
         """
         from urllib.parse import quote
 
-        # URL编码
         encoded_url = quote(beacon_url, safe='')
 
         return [
-            beacon_url,                    # 直接注入
-            # f"http://{beacon_url}",        # 添加协议（如果LLM模板中没有）
+            beacon_url,
             # f"https://{beacon_url}",
-            # encoded_url,                    # URL编码
-            # f"file://{beacon_url}",        # file协议
-            # f"gopher://{beacon_url}",      # gopher协议
         ]
 
-    # ========== Stage 2: 反思攻击方法 ==========
 
     def _execute_stage2(self, request: Dict[str, Any], credentials: Dict[str, Any],
                        stage1_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        执行Stage 2反思攻击
+        Stage 2
 
-        核心逻辑：
-        1. 构建反思输入（基于Stage 1失败分析）
-        2. 调用LLM生成新模板
-        3. 执行新模板（复用Stage 1的执行逻辑）
-        4. 检测OOB（复用）
+        ：
+        1. （Stage 1）
+        2. LLM
+        3. （Stage 1）
+        4. OOB（）
 
         Args:
-            request: 原始请求
-            credentials: 凭证
-            stage1_context: Stage 1的完整结果
+            request:
+            credentials:
+            stage1_context: Stage 1
 
         Returns:
-            Stage 2的结果字典
+            Stage 2
         """
-        # 1. 构建反思suffix
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix(stage1_context)
 
-        # 2. 调用LLM生成新模板（在原prompt基础上append）
         self._log(f"[Step 1: Generating Reflection Templates via LLM]")
         new_templates, llm_reflection_output = self._generate_curl_templates_with_reflection(
             request=request,
@@ -471,7 +436,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         if not new_templates:
             self._log(f"[Reflection] LLM did not generate new templates, returning Stage 1 result")
-            # 返回Stage 1结果，但标记为Stage 2尝试过
             stage1_context["reflection_attempted"] = True
             stage1_context["reflection_note"] = "No new templates generated"
             return stage1_context
@@ -481,21 +445,18 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"  {i}. {tmpl}")
         self._log(f"")
 
-        # 3. 生成新的token（避免和Stage 1冲突）
         token = self._generate_token()
         beacon_url = f"{self.beacon_base}?data={token}"
         self._log(f"[Step 2: Generated New Token]: {token}")
         self._log(f"[Beacon URL]: {beacon_url}")
         self._log(f"")
 
-        # 4. 生成payload列表（复用现有逻辑）
         ssrf_payloads = self._get_payloads(beacon_url)
         self._log(f"[Step 3: Generated {len(ssrf_payloads)} SSRF Payloads]:")
         for i, payload in enumerate(ssrf_payloads, 1):
             self._log(f"  {i}. {payload}")
         self._log(f"")
 
-        # 5. 执行测试（复用Stage 1的执行逻辑）
         self._log(f"[Step 4: Executing Tests]")
         executed_commands = []
         test_results = []
@@ -568,7 +529,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         self._log(f"  Commands Executed: {len(executed_commands)}")
         self._log(f"")
 
-        # 6. 记录执行信息（用于延迟检测）
         method = request.get("method", "GET")
         url = request.get("url", "")
         self.execution_records[token] = {
@@ -580,7 +540,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             "commands_executed": executed_commands
         }
 
-        # 7. 检查beacon日志（立即检测）
         self._log(f"[Step 5: Checking Beacon Detection (immediate)]")
         vulnerable = check_beacon_detection(token)
 
@@ -611,7 +570,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             "test_results": test_results,
             "llm_reflection_output": llm_reflection_output,
             "reflection_analysis": reflection_suffix,
-            # ✅ 新增：保留Stage 1的完整结果
             "stage1_results": {
                 "test_results": stage1_context.get("test_results", []),
                 "curl_templates": stage1_context.get("curl_templates", []),
@@ -623,36 +581,31 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _build_reflection_suffix(self, stage1_context: Dict[str, Any]) -> str:
         """
-        构建追加到原prompt的反思内容
+        prompt
 
         Args:
-            stage1_context: Stage 1的完整结果
+            stage1_context: Stage 1
 
         Returns:
-            反思suffix（追加到原始prompt后面）
+            suffix（prompt）
         """
-        # 提取Stage 1数据
         templates = stage1_context.get("curl_templates", [])
         test_results = stage1_context.get("test_results", [])
         vulnerable = stage1_context.get("vulnerable")
 
-        # 构建反思内容
         suffix = "\n\n"
         suffix += "="*70 + "\n"
         suffix += "STAGE 1 RESULTS (Failed Detection)\n"
         suffix += "="*70 + "\n\n"
 
-        # 1. 之前生成的模板
         suffix += "Previous Templates Generated:\n"
         for i, tmpl in enumerate(templates, 1):
             suffix += f"{i}. {tmpl}\n"
         suffix += "\n"
 
-        # 2. 执行结果（智能提取响应）
         suffix += "Execution Results:\n"
         suffix += "-"*70 + "\n"
 
-        # 去重 + 采样（最多10个）
         sampled = self._sample_test_results(test_results, max_samples=10)
 
         for i, result in enumerate(sampled, 1):
@@ -660,7 +613,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             suffix += f"  Command: {result.get('command', 'N/A')}\n" 
             suffix += f"  HTTP Status: {result.get('http_status', 'N/A')}\n"
 
-            # ✅ 使用智能提取
             response = result.get('response', '')
             if response:
                 suffix += f"  Response (extracted):\n{response}\n"
@@ -670,11 +622,9 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         suffix += "\n"
 
-        # 3. 结果说明
         suffix += f"Result: {'NOT VULNERABLE' if vulnerable is False else 'UNCERTAIN/PENDING'}\n"
         suffix += "\n"
 
-        # 4. 反思任务说明
         suffix += "="*70 + "\n"
         suffix += "YOUR TASK FOR STAGE 2 - REFLECTION\n"
         suffix += "="*70 + "\n\n"
@@ -722,21 +672,19 @@ Commands:
     def _generate_curl_templates_with_reflection(self, request: Dict[str, Any],
                                                  reflection_suffix: str) -> tuple:
         """
-        调用LLM生成反思后的新模板
+        LLM
 
-        策略：在原始prompt基础上append reflection_suffix
+        Strategy:promptappend reflection_suffix
 
         Args:
-            request: 原始请求
-            reflection_suffix: 反思分析内容
+            request:
+            reflection_suffix:
 
         Returns:
-            (新模板列表, LLM输出) 元组
+            (, LLM)
         """
-        # 1. 加载原始prompt
         sys_prompt = self._load_prompt_template()
 
-        # 2. 构建user prompt（和Stage 1相同的格式）
         original_response = str(request.get('response_body', ''))
         extracted_response = extract_useful_response(original_response, max_length=2000)
         user_prompt = f"""REQUEST INFORMATION:
@@ -750,10 +698,8 @@ Response Body (extracted): {extracted_response}
 Please analyze this request and generate curl command templates with {{PAYLOAD}} placeholder for SSRF testing.
 """
 
-        # 3. ✅ Append反思内容
         user_prompt += reflection_suffix
 
-        # 4. 调用LLM
         self._log(f"\n[LLM INPUT - Reflection Prompt]:")
         self._log(f"{'~'*70}")
         self._log(f"{user_prompt}")
@@ -776,7 +722,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             self._log(f"{llm_output}")
             self._log(f"{'~'*70}\n")
 
-            # 5. 解析模板（复用现有的_parse_curl_templates）
             templates = self._parse_curl_templates(llm_output)
             return templates, llm_output
 
@@ -788,39 +733,36 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _sample_test_results(self, test_results: List[Dict], max_samples: int = 10) -> List[Dict]:
         """
-        从测试结果中采样（去重 + 采样）
+        （ + ）
 
         Args:
-            test_results: 完整测试结果列表
-            max_samples: 最大采样数量
+            test_results:
+            max_samples:
 
         Returns:
-            采样后的结果列表
+
         """
         if not test_results:
             return []
 
-        # 按响应哈希去重
         seen = {}
         for r in test_results:
             resp = r.get("response", "")
-            key = resp[:500] if resp else "empty"  # 简单哈希
+            key = resp[:500] if resp else "empty"
             if key not in seen:
                 seen[key] = r
 
         deduped = list(seen.values())
 
-        # 采样（最多max_samples个）
         if len(deduped) <= max_samples:
             return deduped
         else:
-            # 均匀采样
             import random
             return random.sample(deduped, max_samples)
 
     def check_final_results(self) -> Dict[str, bool]:
         """
-        检查最终结果（在统一访问所有页面后调用）
+        Check final results (called after visiting all pages)
 
         Returns:
             {token: is_vulnerable}
@@ -832,7 +774,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         updates = {}
 
         for token in self.execution_records.keys():
-            # 重新检查beacon日志
             is_vulnerable = check_beacon_detection(token)
             updates[token] = is_vulnerable
 

@@ -126,7 +126,7 @@
  *
  */
 
-// ==================== 🔍 DEBUG: 错误捕获 ====================
+// ==================== 🔍 DEBUG: Error capture ====================
 window.wrapper_errors = [];
 window.wrapper_debug_logs = [];
 // ====================================================================
@@ -143,7 +143,7 @@ XMLHttpRequest.prototype['open'] = function() {
 function callbackWrap(object, property, argumentIndex, wrapperFactory) {
 	var original = object[property];
 	object[property] = function() {
-		// 🔍 DEBUG: 捕获wrapper执行错误
+		// 🔍 DEBUG: Capture wrapper execution errors
 		try {
 			wrapperFactory(this, arguments);
 		} catch (e) {
@@ -252,20 +252,20 @@ function getXPath(element) {
       return '//*[@id="'+element.id+'"]';
     }
 
-    // 🆕 方案3增强：尝试使用稳定属性生成XPath
-    // 1. aria-label（稳定且语义化）
+    // Enhanced: try to generate XPath using stable attributes
+    // 1. aria-label (stable and semantic)
     var ariaLabel = element.getAttribute('aria-label');
     if (ariaLabel) {
       return '//*[@aria-label="'+ariaLabel.replace(/"/g, '\\"')+'"]';
     }
 
-    // 2. name属性（表单元素常用）
+    // 2. name attribute (common for form elements)
     var name = element.getAttribute('name');
     if (name) {
       return '//*[@name="'+name.replace(/"/g, '\\"')+'"]';
     }
 
-    // 3. data-*属性（自定义属性，通常稳定）
+    // 3. data-* attributes (custom attributes, usually stable)
     var attrs = element.attributes;
     for (var i = 0; i < attrs.length; i++) {
       if (attrs[i].name.startsWith('data-') &&
@@ -275,7 +275,7 @@ function getXPath(element) {
       }
     }
 
-    // 4. 使用相对路径构建XPath（原有逻辑）
+    // 4. Build XPath using relative path (original logic)
 		for (; element && element.nodeType == 1; element = element.parentNode) {
 
 			var sibblings = element.parentNode.childNodes;
@@ -314,16 +314,16 @@ function addEventListenerWrapper(elem, args) {
 	html_class = elem.className;
   //console.log("AddEventLIstenerWrapper: " + tag + " - Event: " + args[0] + " ID " + id)
 
-	// ✅ 使用增强的getXPath生成XPath（支持id/aria-label/name/data-*/相对路径）
+	// ✅ Use enhanced getXPath (supports id/aria-label/name/data-*/relative path)
 	dom_adress = getXPath(elem);
 
-  // ✅ 如果XPath生成失败，跳过这个事件（不使用hash ID fallback）
+  // ✅ Skip this event if XPath generation fails (no hash ID fallback)
   if( !dom_adress ) {
     console.log("No XPath for element, skipping event:", args[0], tag);
-    return;  // 跳过，不记录这个事件
+    return;  // Skip, do not record this event
   }
 
-	// 🔍 DEBUG: 捕获MD5错误
+	// 🔍 DEBUG: Capture MD5 errors
 	var function_id;
 	try {
 		function_id = MD5(args[1].toString());
