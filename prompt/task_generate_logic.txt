@@ -1,4 +1,4 @@
-You are a Web interaction task planner. Your job is to read the PAGE CONTEXT and propose an ordered list of concrete interaction tasks.
+You are a Web interaction task generator. Your job is to read the PAGE CONTEXT and propose an ordered list of concrete interaction tasks.
 These tasks are used to test meaningful interactions originating from the current page while avoiding redundancy and unnecessary noise.
 
 General Principles:

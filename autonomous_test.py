@@ -38,13 +38,6 @@ Example usage:
 
   python autonomous_test.py --target_url "http://127.0.0.1:3000/login" --login_task "Log in with username: admin, password: admin123" --output "output/test4" &> logs/test4.log
 
-Workflow:
-  1. Login (optional) -> Execute login if login_task is provided
-  2. Deep crawl -> Crawl from specified URL / post-login page / target URL (50 pages)
-  3. Task planning -> Identify and execute application tasks
-  4. Attack planning -> Analyze potential attack surface using LLM intelligent planning
-  5. Attack execution -> Test various vulnerabilities
-  6. Report generation -> Output detailed test results
         """
     )
 

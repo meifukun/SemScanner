@@ -119,7 +119,7 @@ class InteractionExecutionAgent:
     #         return file.read()
 
     def load_bridge_prompt(self) -> str:
-        with open("prompt/bridge_onestep.txt", "r") as file:
+        with open("prompt/interaction_execution_agent.txt", "r") as file:
             return file.read()
 
     def generate_bridge_prompt(self, task: Task, page_description: str, last_step: str) -> str:

@@ -11,19 +11,15 @@ class TaskGenerator:
     """
     "Page -> Task" generator
     """
-    def __init__(self, client, task_queue, root_dir,prompt_path: str = "prompt/task_generate.txt", crawl_prompt_path: str = "prompt/task_generate_crawl.txt",
-        logic_prompt_path: str = "prompt/task_generate_logic.txt",):
-        self.client = client  # Can pass in the OpenAI(client) created in main
-        self.prompt_path = Path(prompt_path)
-        self.task_queue = task_queue  # Optional: used for providing HISTORICAL TASKS
-        self.crawl_prompt_path = Path(crawl_prompt_path)
+    def __init__(self, client, task_queue, root_dir,
+                 logic_prompt_path: str = "prompt/task_generate_logic.txt"):
+        self.client = client
+        self.task_queue = task_queue
         self.logic_prompt_path = Path(logic_prompt_path)
         self.root_dir = Path(root_dir)
-        log_base = self.root_dir/"taskgen"
+        log_base = self.root_dir / "taskgen"
         log_base.mkdir(parents=True, exist_ok=True)
-        self._nav_log_path = log_base / "navigation_task_gen.log"
         self._biz_log_path = log_base / "business_task_gen.log"
-        self._biz_new_log_path = log_base / "business_new_task_gen.log"
 
         def _mk_logger(path: Path):
             def _log(*args, sep=" ", end="\n"):
@@ -35,9 +31,7 @@ class TaskGenerator:
                     pass
             return _log
 
-        self._log_nav = _mk_logger(self._nav_log_path)
         self._log_biz = _mk_logger(self._biz_log_path)
-        self._log_new_biz = _mk_logger(self._biz_new_log_path)
 
 
     def _build_page_context(self, page: PageInfo, ) -> str:
@@ -96,36 +90,6 @@ PAGE CONTEXT:
 
         # Return reasoning and task list
         return reasoning, task_descriptions
-
-    def _parse_tasks(self, text: str) -> List[str]:
-        """
-        Parse strict two-section output (Reasoning/Tasks). Only extract the Tasks section.
-        """
-        # Defense: ensure "Tasks:" marker exists
-        idx = text.find("Tasks:")
-        if idx > 0:
-            tasks_section = text[idx + len("Tasks:"):].strip()
-
-            next_reason = tasks_section.find("Reasoning:")
-            if next_reason >= 0:
-                tasks_section = tasks_section[:next_reason].strip()
-
-            # Split by lines
-            lines = [ln.strip() for ln in tasks_section.splitlines() if ln.strip()]
-
-        # Defense: ensure "Tasks:" marker exists
-        idx = text.find("URLs:")
-        if idx > 0:
-            tasks_section = text[idx + len("URLs:"):].strip()
-
-            next_reason = tasks_section.find("Reasoning:")
-            if next_reason >= 0:
-                tasks_section = tasks_section[:next_reason].strip()
-
-            # Split by lines
-            lines = [ln.strip() for ln in tasks_section.splitlines() if ln.strip()]
-
-        return lines
 
     def _parse_reasoning_and_tasks(self, text: str) -> tuple[str, List[str]]:
         """

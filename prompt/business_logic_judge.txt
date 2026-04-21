@@ -1,0 +1,71 @@
+You are a security analyst reviewing business logic vulnerability test results.
+
+Your task: Determine if the test results prove a real business logic vulnerability exists.
+
+=== INPUT ===
+You will receive:
+1. Task Description: What was being tested
+2. Baseline Request and Response:
+- Original request method, URL, headers, and body
+- Original response status code and extracted response body
+3. Test Execution Results:
+- Test commands that were executed (with parameters)
+- Response status codes
+- Extracted response bodies
+
+=== EVALUATION CRITERIA ===
+
+Evidence of vulnerability:
+- **Response Analysis**: Does the server response indicate unexpected behavior? (e.g., negative balance accepted, unauthorized access granted, validation bypassed, or exposure of information that should not be visible)
+- **Status Codes**: Are there successful responses (200/201) where there should be errors (400/403)?
+- **Response Content**: Does the response body show data modifications that violate business rules?
+- **Comparison Logic**: Compare attack results with expected normal behavior - what's different?
+- **False Positives**: Consider whether observed behavior might be legitimate (e.g., error handling, graceful degradation)
+
+NOT vulnerabilities:
+✗ Proper error responses (400 Bad Request)
+✗ Validation error messages
+✗ 401/403 for unauthorized operations
+✗ Server-side recalculation catching manipulation
+✗ Test responses that are essentially the same as the baseline behavior
+
+=== OUTPUT FORMAT ===
+
+Analysis:
+<Step-by-step reasoning:
+- What does the baseline request/response show?
+- What did each test attempt? What responses were received?
+- How do test responses compare to the baseline behavior?>
+
+Result:
+[If NO vulnerability:]
+No vulnerability exists
+
+[If vulnerability found:]
+<Vulnerability description with evidence>
+
+=== GUIDELINES ===
+1. Be rigorous - require clear evidence
+2. Do NOT rely only on HTTP status codes
+3. Compare test responses to the baseline behavior
+4. Look for business rule violations in responses
+5. Avoid False positive: A finding should not be considered a vulnerability when the server shows proper validation, when responses do not exhibit the expected abnormal behavior, or when all tests return consistent response patterns (e.g., all 400-series errors), indicating normal and stable baseline behavior.
+6. At the same time, it is very very important to avoid missing real vulnerabilities when clear evidence is present.
+
+Now analyze these results:
+
+Task Description: {task_description}
+
+Baseline Request:
+Method: {method}
+URL: {url}
+Headers: {headers}
+Body: {body}
+Baseline Response Status: {response_status}
+Baseline Response Body (extracted):
+{response_body}
+
+Test Execution Results:
+{execution_results}
+
+Provide your analysis:

@@ -16,7 +16,7 @@ from utils.token_tracker import tracker
 
 class ActionType(Enum):
     """Action types the Attack Planning Agent can execute"""
-    ANALYZE_REQUESTS = "analyze_requests"
+    FORMULATE_TASKS = "formulate_tasks"
     SKIP_REQUESTS = "skip_requests"  # New: skip requests that cannot be attacked
     FINISH = "finish"
 
@@ -55,7 +55,7 @@ class AttackPlanningAgent:
     
     def __init__(self, client: OpenAI, crawler: Crawler,
                  account_manager,
-                 prompt_file: str = "prompt/attack_plan_agent.txt",
+                 prompt_file: str = "prompt/audit_task_formulation.txt",
                  ctf_description: Optional[str] = None,
                  default_account: str = None,
                  include_trace_requests: bool = True):  # Default: enable trace requests
@@ -735,8 +735,8 @@ class AttackPlanningAgent:
 
             action_match = re.search(r'Action:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
             if not action_match:
-                if "Attack_Tasks:" in response:
-                    action_type = "analyze_requests"
+                if "Audit_Tasks:" in response:
+                    action_type = "formulate_tasks"
                 elif "Skipped_Requests:" in response:
                     action_type = "skip_requests"
                 else:
@@ -748,7 +748,7 @@ class AttackPlanningAgent:
 
             if "analyze" in action_type:
                 requests_match = re.search(
-                    r'Selected_Requests:\s*\n(.*?)\n\s*(?:Reasoning|Attack_Tasks)', 
+                    r'Selected_Requests:\s*\n(.*?)\n\s*(?:Reasoning|Audit_Tasks)',
                     response, re.DOTALL | re.IGNORECASE
                 )
                 selected_ids = []
@@ -756,7 +756,7 @@ class AttackPlanningAgent:
                     selected_ids = self._parse_id_list(requests_match.group(1))
 
                 reasoning = ""
-                reasoning_match = re.search(r'Reasoning:\s*\n(.*?)\n\s*Attack_Tasks', response, re.DOTALL | re.IGNORECASE)
+                reasoning_match = re.search(r'Reasoning:\s*\n(.*?)\n\s*Audit_Tasks', response, re.DOTALL | re.IGNORECASE)
                 if reasoning_match:
                     reasoning = reasoning_match.group(1).strip()
 
@@ -764,7 +764,7 @@ class AttackPlanningAgent:
                 lines = response.splitlines()
                 start_idx = -1
                 for i, line in enumerate(lines):
-                    if "Attack_Tasks:" in line:
+                    if "Audit_Tasks:" in line:
                         start_idx = i
                         break
                 
@@ -779,7 +779,7 @@ class AttackPlanningAgent:
                     self._log("[AttackPlanningAgent] No valid task lines found")
                     return (None, None)
 
-                return (ActionType.ANALYZE_REQUESTS, {
+                return (ActionType.FORMULATE_TASKS, {
                     "selected_ids": selected_ids,
                     "reasoning": reasoning,
                     "task_lines": task_lines
@@ -1027,7 +1027,7 @@ class AttackPlanningAgent:
             
             if action_type is None:
                 self._log(f"[AttackPlanningAgent] Invalid response")
-            elif action_type == ActionType.ANALYZE_REQUESTS:
+            elif action_type == ActionType.FORMULATE_TASKS:
                 tasks = self._execute_analyze_action(action_data)
                 all_tasks.extend(tasks)
             elif action_type == ActionType.SKIP_REQUESTS:
@@ -1154,7 +1154,7 @@ class AttackPlanningAgent:
 
                 consecutive_invalid_responses = 0
 
-                if action_type == ActionType.ANALYZE_REQUESTS:
+                if action_type == ActionType.FORMULATE_TASKS:
                     tasks = self._execute_analyze_action(action_data)
 
                     for task in tasks:
