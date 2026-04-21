@@ -1,5 +1,5 @@
 """
-SQLAgent - （）
+SQLAgent - ()
 """
 
 from typing import Dict, Any, List
@@ -26,7 +26,7 @@ def extract_sqlmap_info(file_content: str) -> Dict:
                 '404': {...}
             },
             'critical_info': str or None,
-            'last_10_lines': str  # ：10
+            'last_10_lines': str  # :10
         }
     """
     results = {
@@ -85,7 +85,6 @@ def extract_sqlmap_info(file_content: str) -> Dict:
 def format_summary(results: Dict) -> str:
     """
 
-    ：10
 
     Returns:
 
@@ -146,8 +145,7 @@ class SQLInjectionAgent:
     """
     SQLAgent -
     
-    ：
-    1. AttackTask（+）
+    1. AttackTask(+)
     2. sqlmap
     3. sqlmap
     4.
@@ -269,70 +267,6 @@ class SQLInjectionAgent:
             "analysis": judgment.get("analysis", "")
         }
     
-    # def _generate_sqlmap_command(self, task_description: str,
-    #                              target_request: Dict[str, Any],
-    #                              credentials: Dict[str, Any]) -> str:
-    #     """
-    #     LLMsqlmap
-
-    #     Returns:
-    #         sqlmap
-    #     """
-    #     from attack_agent.request_utils import format_credentials_for_display
-    #     credentials_info = format_credentials_for_display(credentials)
-
-    #     prompt = self._analysis_prompt.format(
-    #         task_description=task_description,
-    #         method=target_request.get("method", "GET"),
-    #         url=target_request.get("url", ""),
-    #         headers=json.dumps(target_request.get("headers", {}), indent=2),
-    #         query_params=json.dumps(target_request.get("query_params", {}), indent=2),
-    #         body=json.dumps(target_request.get("body", {}), indent=2) if target_request.get("body") else "None",
-    #         credentials_info=credentials_info
-    #     )
-
-    #     self._log(f"\n[Step 1: Generating SQLMap Command via LLM]")
-    #     self._log(f"{'~'*70}")
-    #     self._log(f"[LLM INPUT - Analysis Prompt]:")
-    #     self._log(f"{prompt}")
-    #     self._log(f"{'~'*70}\n")
-
-    #     try:
-    #         completion = self.client.chat.completions.create(
-    #             model=get_model_name("attack_agent"),
-    #             messages=[
-    #                 {"role": "system", "content": "You are a SQL injection testing expert."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=get_temperature("attack_agent")
-    #         )
-
-    #         llm_output = completion.choices[0].message.content
-
-    #         self._log(f"[LLM OUTPUT - Analysis Response]:")
-    #         self._log(f"{'~'*70}")
-    #         self._log(f"{llm_output}")
-    #         self._log(f"{'~'*70}\n")
-
-    #         command = self._parse_sqlmap_command(llm_output)
-
-    #         self._log(f"[Parsed SQLMap Command (before credentials)]:")
-    #         self._log(f"  {command}\n")
-
-    #         from attack_agent.request_utils import append_credentials_to_sqlmap
-    #         command = append_credentials_to_sqlmap(command, credentials)
-
-    #         self._log(f"[Final SQLMap Command (with credentials)]:")
-    #         self._log(f"  {command}\n")
-
-    #         return command
-
-    #     except Exception as e:
-    #         self._log(f"[SQLi] LLM call failed: {e}")
-    #         import traceback
-    #         self._log(traceback.format_exc())
-    #         return ""
-    
     def _generate_sqlmap_command(self, task_description: str,
                                  target_request: Dict[str, Any],
                                  credentials: Dict[str, Any]) -> str:
@@ -408,7 +342,7 @@ class SQLInjectionAgent:
 
     def _parse_and_handle_file(self, llm_output: str, log_dir_path: str) -> str:
         """
-        ： Prompt  Response Examples
+        : Prompt  Response Examples
         """
         import os
         
@@ -452,106 +386,10 @@ class SQLInjectionAgent:
         
         return ""
 
-    def _parse_sqlmap_command(self, llm_output: str) -> str:
-        """
-        LLMsqlmap（ - ）
-        Returns:
-            sqlmap
-        """
-        match = re.search(r'SQLMap_Command:\s*\n(.+?)(?:\n\s*\n|\Z)', llm_output, re.DOTALL)
-        if not match:
-            self._log("[WARN] No SQLMap_Command section found in LLM output")
-            return ""
-        
-        command_text = match.group(1).strip()
-        original_text = command_text
-        
-        command_text = re.sub(r'^```(?:bash|sh|shell)?\s*\n?', '', command_text, flags=re.IGNORECASE)
-        command_text = re.sub(r'\n?```\s*$', '', command_text)
-        
-        command_text = command_text.strip('`')
-        command_text = command_text.replace('`', '')
-        
-        command_text = command_text.strip()
-        if (command_text.startswith('"') and command_text.endswith('"')) or \
-        (command_text.startswith("'") and command_text.endswith("'")):
-            command_text = command_text[1:-1]
-        
-        command_text = re.sub(r'^\$\s+', '', command_text)
-        
-        command_text = re.sub(r'^\d+[\.)]\s+', '', command_text)
-        
-        command_text = command_text.replace('\\\n', ' ').replace('\\ \n', ' ')
-        
-        command_text = re.sub(r'\s+', ' ', command_text).strip()
-        
-        if original_text != command_text:
-            self._log(f"[DEBUG] Command cleaned:")
-            self._log(f"  Before: {original_text[:200]}...")
-            self._log(f"  After:  {command_text[:200]}...")
-        
-        lines = [line.strip() for line in command_text.splitlines() if line.strip()]
-        
-        for line in lines:
-            cleaned_line = line.strip('`').strip('"').strip("'").replace('`', '')
-            cleaned_line = re.sub(r'^\$\s+', '', cleaned_line)
-            cleaned_line = re.sub(r'^\d+[\.)]\s+', '', cleaned_line)
-            
-            self._log(f"[DEBUG] Final extracted command: {cleaned_line[:200]}...")
-            return cleaned_line
-        
-        if lines:
-            cleaned_first = lines[0].strip('`').strip('"').strip("'").replace('`', '')
-            cleaned_first = re.sub(r'^\$\s+', '', cleaned_first)
-            cleaned_first = re.sub(r'^\d+[\.)]\s+', '', cleaned_first)
-            self._log(f"[DEBUG] Fallback to first line: {cleaned_first[:200]}...")
-            return cleaned_first
-        
-        self._log("[ERROR] No valid sqlmap command found after cleaning")
-        return ""
-    
-    # def _append_credentials_to_command(self, base_command: str,
-    #                                   credentials: Dict[str, Any]) -> str:
-    #     """
-    #     sqlmap（✅ ：storagetoken）
-
-    #     Args:
-    #         base_command: LLM
-    #         credentials: account credentials
-
-    #     Returns:
-    #         sqlmap
-    #     """
-    #     if not base_command:
-    #         return ""
-
-    #     parts = [base_command.rstrip()]
-
-    #     has_cookie = "--cookie" in base_command.lower()
-    #     has_header = "-H" in base_command or "--header" in base_command.lower()
-
-    # # add Cookie header
-    #     cookies = credentials.get("cookies", [])
-    #     if cookies and not has_cookie:
-    #         cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
-    #         parts.append(f'--cookie "{cookie_str}"')
-
-    #     headers = credentials.get("headers", {})
-    #     if headers and not has_header:
-    #         for key, value in headers.items():
-    #             parts.append(f'-H "{key}: {value}"')
-    #     elif not has_header:
-    #         from attack_agent.request_utils import extract_auth_token
-    #         token = extract_auth_token(credentials)
-    #         if token:
-    #             parts.append(f'-H "Authorization: Bearer {token}"')
-
-    #     return " ".join(parts)
-
     def _append_credentials_to_command(self, base_command: str,
                                      credentials: Dict[str, Any]) -> str:
         """
-        sqlmap（： Content-Type  Auth ）
+        sqlmap(: Content-Type  Auth )
         """
         if not base_command:
             return ""
@@ -583,7 +421,7 @@ class SQLInjectionAgent:
     
     def _execute_sqlmap(self, command: str, log_file: Path) -> Dict[str, Any]:
         """
-        sqlmap（）
+        sqlmap()
 
         Returns:
             {summary: str}  {error: str}
@@ -686,7 +524,6 @@ class SQLInjectionAgent:
         """
         LLM
         
-        ：
         - "Vulnerability exists: Yes" -> True
         - "Vulnerability exists: No" -> False
         """

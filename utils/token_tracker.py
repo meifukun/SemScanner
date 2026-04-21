@@ -254,7 +254,7 @@ class TokenTracker:
         total = summary.pop("__total__", None)
 
         print("\n" + "=" * 95)
-        print("📊  Token Usage & Cost Summary")
+        print("Token Usage & Cost Summary")
         print("=" * 95)
         print(f"{'Category':<28} {'Calls':>5} {'Input':>10} {'Cached':>10} "
               f"{'Cache%':>7} {'Output':>10} {'Reason':>10} {'Cost(USD)':>11}")

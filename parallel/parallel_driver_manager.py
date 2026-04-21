@@ -21,7 +21,7 @@ class ParallelDriverManager:
 
         Args:
             account_manager: AccountManager instance for obtaining credentials
-            base_url: Base URL (e.g. http://127.0.0.1:4281)
+            base_url: Base URL of the target application
             chrome_options: Chrome configuration options (optional, defaults to headless mode)
         """
         self.account_manager = account_manager
@@ -95,12 +95,14 @@ class ParallelDriverManager:
 
         driver.request_interceptor = interceptor
 
-        # Inject XSS detection script (consistent with main driver)
+        # Inject XSS detection script with beacon URL (consistent with main driver)
         try:
+            from config.llm_config import BEACON_URL
             xss_script_path = "js/xss_xhr.js"
             if os.path.exists(xss_script_path):
                 with open(xss_script_path, "r") as f:
-                    driver.add_script(f.read())
+                    xss_script = f.read().replace("{BEACON_URL}", BEACON_URL.rstrip("/"))
+                    driver.add_script(xss_script)
                 print(f"[CloneDriver] XSS detection script injected")
         except Exception as e:
             print(f"[CloneDriver] XSS script injection failed: {e}")
@@ -144,40 +146,6 @@ class ParallelDriverManager:
             print(f"[CloneDriver] Failed to visit domain root path: {e}")
             driver.quit()
             raise
-
-        # # ===== Step 4: Inject Cookies =====
-        # cookies = credentials.get('cookies', [])
-        # if cookies:
-        #     print(f"[CloneDriver] Injecting {len(cookies)} cookies...")
-        #     success_count = 0
-        #     for cookie in cookies:
-        #         try:
-        #             # Selenium required cookie format
-        #             # Remove fields that may cause issues
-        #             cookie_dict = {
-        #                 'name': cookie['name'],
-        #                 'value': cookie['value'],
-        #                 'domain': cookie.get('domain'),
-        #                 'path': cookie.get('path', '/'),
-        #                 'secure': cookie.get('secure', False),
-        #                 'httpOnly': cookie.get('httpOnly', False),
-        #             }
-
-        #             # Optional fields
-        #             # Optional field compatibility handling
-        #             if 'expiry' in cookie:
-        #                 cookie_dict['expiry'] = int(cookie['expiry'])
-        #             elif 'expires' in cookie:  # New: compatible with CDP format
-        #                 cookie_dict['expiry'] = int(cookie['expires'])
-        #             if 'sameSite' in cookie:
-        #                 cookie_dict['sameSite'] = cookie['sameSite']
-
-        #             driver.add_cookie(cookie_dict)
-        #             success_count += 1
-        #         except Exception as e:
-        #             print(f"[CloneDriver] Cookie injection failed [{cookie.get('name')}]: {e}")
-
-        #     print(f"[CloneDriver] Cookies injection complete: {success_count}/{len(cookies)}")
 
         # ===== Step 4: Inject Cookies =====
         cookies = credentials.get('cookies', [])

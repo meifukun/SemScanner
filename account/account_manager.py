@@ -25,7 +25,7 @@ class AccountManager:
     Core improvements:
     1. No longer hardcodes username/password fields
     2. Uses login_task_description to pass login information
-    3. Lets Bridge/LLM decide how to fill in forms
+    3. Lets InteractionExecutionAgent/LLM decide how to fill in forms
     4. Supports storing and managing WebDriver instances (for scenarios requiring JS execution like XSS)
     """
 
@@ -73,73 +73,6 @@ class AccountManager:
 
         return account
 
-    def login_account(self,
-                 account: Account,
-                 login_url: str = None,  # Changed to optional parameter
-                 bridge = None) -> bool:
-        """
-        Execute account login
-
-        Args:
-            account: The account to log in
-            login_url: Login page URL (optional, defaults to the URL passed during initialization)
-            bridge: Bridge instance
-
-        Returns:
-            Whether login was successful
-        """
-        from task.tasks import Task
-
-        # Use the provided URL or default URL
-        if login_url is None:
-            login_url = self.default_login_url
-
-        if not login_url:
-            raise ValueError("No login URL provided and no default login URL set")
-
-        print(f"[AccountManager] Logging in account: {account.account_id}")
-        print(f"  Task: {account.login_task_description}")
-        print(f"  URL: {login_url}")
-
-        # Create login task
-        login_task = Task(
-            task_id=f"login_{account.account_id}",
-            description=account.login_task_description,
-            initial_url=login_url
-        )
-
-        # Navigate to login page
-        bridge.driver.get(login_url)
-        time.sleep(0.6)
-
-        # Execute login
-        try:
-            bridge.run_task(login_task,
-                        photo_dir=Path("output/account_logins") / account.account_id,
-                        logging_in=True)
-
-            # Extract credentials
-            time.sleep(1)
-            credentials = self._extract_credentials(bridge.driver)
-
-            # Save driver instance
-            self._drivers[account.account_id] = bridge.driver
-
-            # Update account state
-            account.credentials = credentials
-            account.is_logged_in = True
-            account.login_url = login_url
-            account.has_driver = True  # Mark as having a driver
-
-            self.save_accounts()
-
-            print(f"[AccountManager] Login successful")
-            return True
-
-        except Exception as e:
-            print(f"[AccountManager] Login failed: {e}")
-            return False
-
     def _extract_credentials(self, driver) -> Dict[str, Any]:
         """
         Extract credentials from driver (full version, no filtering)
@@ -152,17 +85,6 @@ class AccountManager:
                 "headers": {}  # Empty for now, attack Agent decides what to use
             }
         """
-        print(f"[DEBUG] Starting credential extraction...")
-        print(f"[DEBUG] Current URL: {driver.current_url}")
-
-        # # Extract cookies (usually no issues)
-        # try:
-        #     cookies = driver.get_cookies()
-        #     print(f"[DEBUG] Cookies extraction successful: {len(cookies)} cookies")
-        # except Exception as e:
-        #     print(f"[DEBUG] Cookies extraction failed: {e}")
-        #     cookies = []
-
         # ==========================================
         # Fix: Use official execute_cdp_cmd method
         # ==========================================
@@ -172,155 +94,45 @@ class AccountManager:
             # It can bypass Path and Domain restrictions to get all cookies in the browser
             result = driver.execute_cdp_cmd('Network.getAllCookies', {})
             cookies = result.get('cookies', [])
-            print(f"[DEBUG] (CDP) Cookies extraction successful: {len(cookies)} cookies")
 
-            # Debug: Check if JSESSIONID exists
+            # Check if session-related cookies exist
             for c in cookies:
                 if 'SESSION' in c['name'].upper():
                     print(f"  Captured key Cookie: {c['name']} = {c['value'][:10]}... (Path: {c['path']})")
 
         except Exception as e:
-            print(f"[DEBUG] CDP Cookie extraction failed, falling back to standard method: {e}")
             try:
                 cookies = driver.get_cookies()
-                print(f"[DEBUG] (Standard) Cookies extraction successful: {len(cookies)} cookies")
             except Exception as e2:
-                print(f"[DEBUG] All Cookie extraction methods failed: {e2}")
                 cookies = []
 
-        # localStorage detailed diagnostics
-        print(f"[DEBUG] Starting localStorage analysis...")
-
-        # Step 1: Check localStorage basic info
-        try:
-            basic_info = driver.execute_script("""
-                return {
-                    length: localStorage.length,
-                    url: window.location.href,
-                    userAgent: navigator.userAgent.substring(0, 50)
-                };
-            """)
-            print(f"[DEBUG] localStorage basic info: {basic_info}")
-        except Exception as e:
-            print(f"[DEBUG] Failed to get localStorage basic info: {e}")
-
-        # Step 2: Calculate localStorage size
-        try:
-            size_info = driver.execute_script("""
-                let totalSize = 0;
-                let keyCount = 0;
-                let largestKey = '';
-                let largestSize = 0;
-
-                for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    const value = localStorage.getItem(key);
-                    const size = new Blob([key + value]).size;
-                    totalSize += size;
-                    keyCount++;
-
-                    if (size > largestSize) {
-                        largestSize = size;
-                        largestKey = key;
-                    }
-                }
-
-                return {
-                    keyCount: keyCount,
-                    totalSizeBytes: totalSize,
-                    totalSizeKB: Math.round(totalSize / 1024 * 100) / 100,
-                    largestKey: largestKey,
-                    largestSizeBytes: largestSize,
-                    largestSizeKB: Math.round(largestSize / 1024 * 100) / 100
-                };
-            """)
-            print(f"[DEBUG] localStorage size analysis:")
-            print(f"  - Key-value pairs: {size_info['keyCount']}")
-            print(f"  - Total size: {size_info['totalSizeKB']} KB ({size_info['totalSizeBytes']} bytes)")
-            print(f"  - Largest key: {size_info['largestKey']} ({size_info['largestSizeKB']} KB)")
-
-            # Warning for large data
-            if size_info['totalSizeKB'] > 100:
-                print(f"[DEBUG] localStorage data is large (>100KB), may cause deserialization failure")
-
-        except Exception as e:
-            print(f"[DEBUG] Failed to calculate localStorage size: {e}")
-
-        # Step 3: Try to get all key names (without values)
-        try:
-            keys_only = driver.execute_script("""
-                const keys = [];
-                for (let i = 0; i < localStorage.length; i++) {
-                    keys.push(localStorage.key(i));
-                }
-                return keys;
-            """)
-            print(f"[DEBUG] localStorage key list: {keys_only}")
-            print(f"[DEBUG] Number of keys: {len(keys_only)}")
-        except Exception as e:
-            print(f"[DEBUG] Failed to get localStorage key names: {e}")
-
-        # Step 4: Try full extraction (original logic)
-        print(f"[DEBUG] Attempting full localStorage extraction...")
+        # Extract localStorage
         try:
             localStorage = driver.execute_script("""
-                console.log('Starting localStorage extraction, item count:', localStorage.length);
                 const out = {};
                 for (let i = 0; i < localStorage.length; i++) {
                     const k = localStorage.key(i);
                     const v = localStorage.getItem(k);
                     out[k] = v;
-                    console.log(`Extracting key ${i}: ${k.substring(0, 20)}... (length: ${v.length})`);
                 }
-                console.log('localStorage extraction complete, return object size:', JSON.stringify(out).length);
                 return out;
             """)
-            print(f"[DEBUG] localStorage full extraction successful: {len(localStorage)} items")
 
         except Exception as e:
-            print(f"[DEBUG] localStorage full extraction failed: {e}")
-            print(f"[DEBUG] Error type: {type(e).__name__}")
-            print(f"[DEBUG] Error message: {str(e)}")
             localStorage = {}
 
-            # Step 5: Try extracting one by one to find problematic keys
-            print(f"[DEBUG] Attempting to extract localStorage items one by one...")
+            # Try extracting one by one to find problematic keys
             try:
                 keys = driver.execute_script("return Array.from({length: localStorage.length}, (_, i) => localStorage.key(i));")
-                problem_keys = []
 
                 for key in keys[:10]:  # Only check first 10
                     try:
                         value = driver.execute_script(f"return localStorage.getItem('{key}');")
-                        print(f"[DEBUG] Key '{key[:30]}...' extraction successful (length: {len(value) if value else 0})")
                     except Exception as e:
-                        print(f"[DEBUG] Key '{key[:30]}...' extraction failed: {e}")
-                        problem_keys.append(key)
-
-                if problem_keys:
-                    print(f"[DEBUG] Found problematic keys: {problem_keys}")
+                        pass
 
             except Exception as e:
-                print(f"[DEBUG] One-by-one extraction also failed: {e}")
-
-        # sessionStorage similar diagnostics
-        print(f"[DEBUG] Starting sessionStorage analysis...")
-        try:
-            session_size_info = driver.execute_script("""
-                let totalSize = 0;
-                for (let i = 0; i < sessionStorage.length; i++) {
-                    const key = sessionStorage.key(i);
-                    const value = sessionStorage.getItem(key);
-                    totalSize += new Blob([key + value]).size;
-                }
-                return {
-                    keyCount: sessionStorage.length,
-                    totalSizeKB: Math.round(totalSize / 1024 * 100) / 100
-                };
-            """)
-            print(f"[DEBUG] sessionStorage: {session_size_info['keyCount']} items, {session_size_info['totalSizeKB']} KB")
-        except Exception as e:
-            print(f"[DEBUG] sessionStorage size analysis failed: {e}")
+                pass
 
         # Extract sessionStorage
         try:
@@ -332,12 +144,8 @@ class AccountManager:
                 }
                 return out;
             """)
-            print(f"[DEBUG] sessionStorage extraction successful: {len(sessionStorage)} items")
         except Exception as e:
-            print(f"[DEBUG] sessionStorage extraction failed: {e}")
             sessionStorage = {}
-
-        print(f"[DEBUG] Credential extraction complete")
 
         credentials = {
             "cookies": cookies,

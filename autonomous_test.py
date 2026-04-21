@@ -18,7 +18,7 @@ def main():
         epilog="""
 Example usage:
 
-  # Application requiring login (uses LLM-based intelligent planning by default)
+  # Application requiring login
   python autonomous_test.py \\
       --target_url "http://127.0.0.1:3000/login" \\
       --login_task "Log in with username: admin, password: admin123" \\
@@ -36,20 +36,13 @@ Example usage:
       --crawl_start_url "http://127.0.0.1:3000/admin" \\
       --output "output/test3"
 
-  # 🆕 Ablation experiment: use exhaustive mode (generate tasks for all vulnerability types per request)
-  python autonomous_test.py \\
-      --target_url "http://127.0.0.1:3000/login" \\
-      --login_task "Log in with username: admin, password: admin123" \\
-      --output "output/experiment_exhaustive" \\
-      --attack_planning_mode exhaustive
-
   python autonomous_test.py --target_url "http://127.0.0.1:3000/login" --login_task "Log in with username: admin, password: admin123" --output "output/test4" &> logs/test4.log
 
 Workflow:
   1. Login (optional) -> Execute login if login_task is provided
   2. Deep crawl -> Crawl from specified URL / post-login page / target URL (50 pages)
   3. Task planning -> Identify and execute application tasks
-  4. Attack planning -> Analyze potential attack surface (supports LLM intelligent planning or exhaustive testing)
+  4. Attack planning -> Analyze potential attack surface using LLM intelligent planning
   5. Attack execution -> Test various vulnerabilities
   6. Report generation -> Output detailed test results
         """
@@ -81,13 +74,6 @@ Workflow:
         help="Output directory for results (e.g., output/test1)"
     )
 
-    parser.add_argument(
-        "--attack_planning_mode",
-        choices=["llm", "exhaustive"],
-        default="llm",
-        help="Attack planning mode: llm (LLM intelligent planning, default) or exhaustive (test all types, for ablation experiments)"
-    )
-
     args = parser.parse_args()
 
     # Initialize OpenAI client
@@ -103,7 +89,7 @@ Workflow:
 
     # Print startup information
     print("\n" + "="*70)
-    print("🚀 Autonomous Security Testing Framework")
+    print("Autonomous Security Testing Framework")
     print("="*70)
     print(f"Target URL: {args.target_url}")
     if args.login_task:
@@ -114,13 +100,6 @@ Workflow:
         print(f"Crawl start URL: {args.crawl_start_url}")
     print(f"Output directory: {args.output}")
 
-    # 🆕 Display attack planning mode
-    mode_display = {
-        "llm": "LLM Intelligent Planning",
-        "exhaustive": "Exhaustive Testing (Ablation Experiment)"
-    }
-    print(f"Attack planning mode: {mode_display.get(args.attack_planning_mode, args.attack_planning_mode)}")
-
     print("="*70)
     print("")
 
@@ -130,10 +109,7 @@ Workflow:
         initial_url=args.target_url,
         login_task=args.login_task,
         crawl_start_url=args.crawl_start_url,
-        output_dir=args.output,
-        config={
-            "attack_planning_mode": args.attack_planning_mode  # 🆕 Pass attack planning mode
-        }
+        output_dir=args.output
     )
 
     # Execute tests
@@ -142,7 +118,7 @@ Workflow:
 
         # Print final summary
         print("\n" + "="*70)
-        print("✅ Testing Complete - Quick Summary")
+        print("Testing Complete - Quick Summary")
         print("="*70)
         print(f"Pages discovered: {results['crawling']['total_pages']}")
         print(f"Tasks executed: {results['testing']['tasks_executed']}")
@@ -150,18 +126,18 @@ Workflow:
         print(f"Vulnerabilities found: {results['testing']['vulnerabilities_found']}")
         print(f"Total time: {results['timing']['total_seconds']:.1f}s")
         print("")
-        print(f"📁 Detailed report: {args.output}/final_report.json")
-        print(f"📁 Log file: {args.output}/high_level_agent.log")
+        print(f"Detailed report: {args.output}/final_report.json")
+        print(f"Log file: {args.output}/high_level_agent.log")
         print("="*70)
 
         return 0
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  Testing interrupted by user")
+        print("\n\nTesting interrupted by user")
         return 1
 
     except Exception as e:
-        print(f"\n\n❌ Testing failed: {e}")
+        print(f"\n\nTesting failed: {e}")
         import traceback
         traceback.print_exc()
         return 1

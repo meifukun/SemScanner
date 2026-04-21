@@ -10,9 +10,9 @@ from urllib.parse import urlsplit
 from app_info.models import PageInfo, Edge, NetworkRequest
 from app_info.webapp_store import WebAppStore
 from capture.network_capture import NetworkCapture
-from crawl.sensors import Sensors
+from crawl.dom_semantic_extractor import DOMSemanticExtractor
 from crawl.Actuators import Actuators
-from crawl.Bridge import Bridge
+from crawl.interaction_execution_agent import InteractionExecutionAgent
 from task.task_queue import TaskQueue
 from task.task_generator import TaskGenerator
 from crawl.tracer import ExecutionTracer
@@ -36,9 +36,9 @@ class Crawler:
             print("   - Improvement: smart indexing for duplicate elements")
             print("=" * 60)
 
-        self.sensors = Sensors(driver, use_improved_locator=use_improved_locator)
+        self.sensors = DOMSemanticExtractor(driver, use_improved_locator=use_improved_locator)
         self.acts = Actuators(self.sensors)
-        self.bridge = Bridge(sensors=self.sensors, actuators=self.acts, client=client)
+        self.bridge = InteractionExecutionAgent(sensors=self.sensors, actuators=self.acts, client=client)
         self.root_dir = store_root
         self.store = WebAppStore(root_dir=store_root)
         self.task_queue = TaskQueue(path=os.path.join(store_root, "tasks_queue.jsonl"))
@@ -471,17 +471,6 @@ class Crawler:
         return False
 
 
-    # Page content deduplication function
-    def _is_new_content_page(self, url: str) -> bool:
-        """Determine if page is a 'new content cluster' based on actual HTML. Falls back to True on error (avoid missing pages)."""
-        try:
-            html_src = self.driver.page_source
-            res = self.content_index.classify(url, html_src, driver=self.driver)
-            return bool(res["is_new"])
-        except Exception as e:
-            print(f"[Dedupe] classify error for {url}: {e}")
-            return True
-
     # Two callback functions used by the tracer
     def construct_edge(self, url):
         # Collect all links on this page
@@ -548,38 +537,6 @@ class Crawler:
             self.store.add_page(page, persist=True)
 
             print(f"[Crawler] New page stored: {url}, generated {len(task_descriptions)} tasks")
-
-    def _get_urls_from_edges(self) -> List[str]:
-        """
-        Read all URLs from edge files for traversal
-
-        Returns:
-            Deduplicated URL list, excluding visited and blacklisted URLs
-        """
-        all_urls = set()
-
-        # 1. Collect URLs from all edges
-        for edge in self.store.edges:
-            all_urls.add(edge.from_url)
-            all_urls.add(edge.to_url)
-
-        # 2. Filter visited URLs (from store)
-        visited = set(self.store.pages.keys())
-        pending_urls = all_urls - visited
-
-        # 3. Filter blacklisted URLs
-        filtered_urls = [
-            url for url in pending_urls
-            if not self._is_url_blacklisted(url)
-        ]
-
-        print(f"[Crawl] Edge statistics:")
-        print(f"  - Total URLs: {len(all_urls)}")
-        print(f"  - Visited: {len(visited)}")
-        print(f"  - Pending: {len(pending_urls)}")
-        print(f"  - After filtering: {len(filtered_urls)}")
-
-        return filtered_urls
 
     def _get_new_urls_from_edges(self, visited_urls: set, nav_queue: list) -> List[str]:
         """
@@ -701,11 +658,6 @@ class Crawler:
         # Create LLM thread pool
         llm_executor = ThreadPoolExecutor(max_workers=max_llm_workers)
 
-        # Debug: priority URL for processing
-        debug_priority_url = "not used for now"
-        # debug_priority_url = "http://localhost:4328/settings#notifications"
-        # debug_priority_url = "http://127.0.0.1:4325/dashboard/show"
-
         # BFS control variables
         bfs_limit = 30  # First 30 visits in sequential order
         bfs_count = 0  # Number of sequentially visited pages
@@ -723,21 +675,14 @@ class Crawler:
                     print(f"[Crawl] Failed to add initial page to dedupe: {e}")
 
             while nav_queue:
-                # Debug: prioritize specific URL
-                if debug_priority_url in nav_queue:
-                    current_url = debug_priority_url
-                    nav_queue.remove(debug_priority_url)
-                    print(f"[DEBUG] Prioritizing target URL: {current_url}")
+                # First 30 visits in sequential order
+                if bfs_count < bfs_limit:
+                    current_url = nav_queue.pop(0)  # Sequential traversal
+                    bfs_count += 1
                 else:
-                    # current_url = nav_queue.pop(0)
-                    # First 30 visits in sequential order
-                    if bfs_count < bfs_limit:
-                        current_url = nav_queue.pop(0)  # Sequential traversal
-                        bfs_count += 1
-                    else:
-                        # Then start random selection
-                        idx = random.randrange(len(nav_queue))
-                        current_url = nav_queue.pop(idx)
+                    # Then start random selection
+                    idx = random.randrange(len(nav_queue))
+                    current_url = nav_queue.pop(idx)
 
                 # Blacklist check
                 if self._is_url_blacklisted(current_url):
@@ -953,11 +898,6 @@ class Crawler:
                     return
 
     # Export tasks and semantic graph
-    def _get_page_abstract(self, page_url: str) -> str:
-        """Get page abstract description (e.g., based on page content)"""
-        page_info = self.store.get_page(page_url)
-        return page_info.abstract_page
-
     def _get_page_description(self, page_url: str) -> str:
         """Get page abstract description (e.g., based on page content)"""
         page_info = self.store.get_page(page_url)
@@ -1083,26 +1023,12 @@ class Crawler:
             print(f"[Crawler] Warning: page cache not found, rescanning")
             self.sensors.update_abstract_page()
 
-            # DEBUG: record scan log (write to file)
-            if hasattr(self.sensors, 'debug_scan_log'):
-                debug_log_path = self.store.traces_dir / f"{task.task_id}" / "scan_debug.log"
-                debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(debug_log_path, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(self.sensors.debug_scan_log))
-                print(f"[Crawler] Scan debug log saved: {debug_log_path}")
-
         # Execute task
         self.bridge.run_task(task, photo_dir = self.store.traces_dir / f"{task.task_id}", logging_in=logging_in)
 
         trace = self.tracer.end_task()
         self.store.save_trace(trace)
         print(f"[Crawler] Task {task.task_id} execution completed")
-
-    def _restore_actions_mapping_from_abstract(self):
-        """
-        Deprecated: no longer parses from abstract_page, now restores directly from PageInfo.actions_mapping
-        """
-        pass
 
     # Graph for attack planning agent
     def _generate_execution_graph_with_requests(self, include_trace_requests: bool = True) -> Dict:
@@ -1254,18 +1180,6 @@ class Crawler:
                         seen_requests.add(key)
 
             # 3. Supplement dynamic jumps from store.edges (including all dynamically generated URLs)
-            # Debug: count edges from current node
-            edges_from_current = [e for e in self.store.edges if e.from_url == url]
-            edges_with_params = [e for e in edges_from_current if '?' in e.to_url]
-
-            if url == "http://127.0.0.1:4281/#/search":
-                print(f"\n[DEBUG] Processing node: {url}")
-                print(f"  Total edges in store: {len(self.store.edges)}")
-                print(f"  Edges from this node: {len(edges_from_current)}")
-                print(f"  Edges with params: {len(edges_with_params)}")
-                for e in edges_with_params:
-                    print(f"    -> {e.to_url}")
-
             for edge in self.store.edges:
                 if edge.from_url == url:  # Find edges from current node
                     to_url = edge.to_url

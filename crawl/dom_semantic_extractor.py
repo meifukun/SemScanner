@@ -7,7 +7,7 @@ from crawl.EventMapping import EventMapping
 import time
 import re
 
-class Sensors:
+class DOMSemanticExtractor:
     # Meaningful event types (whitelist)
     # Note: submit is not in this list, form submission should be handled via SUBMIT FORM command (clicking submit button)
     MEANINGFUL_EVENTS = {
@@ -40,7 +40,7 @@ class Sensors:
 
     def __init__(self, driver, use_improved_locator=False):
         """
-        Initialize Sensors
+        Initialize DOMSemanticExtractor
 
         Args:
             driver: Selenium WebDriver
@@ -87,12 +87,6 @@ class Sensors:
         # Reset counters
         self._element_count = 0
         self._event_count = 0
-
-        # DEBUG: Initialize scan log (for external reading)
-        self.debug_scan_log = []
-        self.debug_scan_log.append("="*80)
-        self.debug_scan_log.append("[ELEMENT SCAN DEBUG] Starting element scan")
-        self.debug_scan_log.append("="*80)
 
         # Time recording points
         t1 = time.time()
@@ -188,39 +182,11 @@ class Sensors:
         for idx, elem in enumerate(elements):
             # Check if element limit reached
             if self._element_count >= self.MAX_ELEMENTS:
-                self.debug_scan_log.append(f"[LIMIT REACHED] Max element count limit reached: {self.MAX_ELEMENTS}")
                 print(f"  Warning: Element limit reached ({self.MAX_ELEMENTS}), stopping processing")
                 break
             try:
                 # Use index instead of sensor_id
                 elem_key = str(idx)
-
-                # DEBUG: Record basic info for each element (including skipped ones)
-                try:
-                    elem_tag = elem.tag_name
-                    elem_text = (elem.text or '')[:40].replace('\n', ' ')  # Limit length, replace newlines
-                    elem_dom_id = elem.get_attribute('id') or ''
-                    elem_role = elem.get_attribute('role') or ''
-                    visible = self._visibility_cache.get(elem_key, False)
-
-                    debug_line = f"[SCAN-{idx:03d}] tag={elem_tag:10s} visible={str(visible):5s} dom_id={elem_dom_id:30s} role={elem_role:10s} text='{elem_text}'"
-
-                    # Check if already processed
-                    if elem_key in self._processed_elements:
-                        self.debug_scan_log.append(debug_line + " -> SKIP(already_processed)")
-                        continue
-
-                    # Check visibility (read from cache)
-                    if not visible:
-                        self.debug_scan_log.append(debug_line + " -> SKIP(not_visible)")
-                        self._processed_elements.add(elem_key)
-                        continue
-
-                    # Record element to be processed
-                    self.debug_scan_log.append(debug_line + " -> PROCESSING")
-
-                except Exception as e:
-                    self.debug_scan_log.append(f"[SCAN-{idx:03d}] <error reading element info: {e}>")
 
                 # Check if already processed
                 if elem_key in self._processed_elements:
@@ -293,23 +259,6 @@ class Sensors:
         print(f"  Event abstraction extraction: {t10 - t9:.4f} sec")
 
         self.abstract_page = '\n'.join(lines)
-
-        # DEBUG: Record final mapping info
-        self.debug_scan_log.append("="*80)
-        self.debug_scan_log.append(f"[MAPPING DEBUG] Generated {len(self.actions_mapping.mapping)} element mappings in total")
-        self.debug_scan_log.append("="*80)
-
-        # Record info for each mapping (limit to first 100)
-        for action_id in sorted(self.actions_mapping.mapping.keys())[:100]:
-            try:
-                mapping_info = self.actions_mapping.mapping[action_id]
-                locator = mapping_info.get('locator', mapping_info.get('primary', 'N/A'))[:50]
-                elem_type = mapping_info.get('type', 'N/A')
-                self.debug_scan_log.append(f"  [MAP-{action_id:03d}] type={elem_type:15s} locator={locator}")
-            except:
-                self.debug_scan_log.append(f"  [MAP-{action_id:03d}] <error reading mapping>")
-
-        self.debug_scan_log.append("="*80)
 
         end_time = time.time()
         print(f"Total execution time: {end_time - start_time:.4f} sec")
@@ -683,85 +632,6 @@ class Sensors:
             return True
         return False
 
-    # def _process_clickable(self, elem):
-    #     """Process clickable elements - improved version"""
-    #     text = self._get_element_text_cached(elem, include_children=False)
-    #
-    #     # Special handling for search icon
-    #     if elem.tag_name.lower() == 'mat-icon':
-    #         icon_text = text.strip()
-    #         if icon_text == 'search':
-    #             elem_id = self.actions_mapping.add_action(elem, 'clickable')
-    #             sensor_id = elem.get_attribute('data-sensor-id')
-    #
-    #             # Add data-sensor-id and data-type
-    #             attrs = [f'id={elem_id}']
-    #             if sensor_id:
-    #                 attrs.append(f'data-sensor-id="{sensor_id}"')
-    #             attrs.append('data-type="clickable"')
-    #             attrs_str = ' '.join(attrs)
-    #
-    #             return f'<button {attrs_str}>Activate Search</button>'
-    #         elif icon_text == 'close':
-    #             elem_id = self.actions_mapping.add_action(elem, 'clickable')
-    #             sensor_id = elem.get_attribute('data-sensor-id')
-    #
-    #             attrs = [f'id={elem_id}']
-    #             if sensor_id:
-    #                 attrs.append(f'data-sensor-id="{sensor_id}"')
-    #             attrs.append('data-type="clickable"')
-    #             attrs_str = ' '.join(attrs)
-    #
-    #             return f'<button {attrs_str}>Close Search</button>'
-    #
-    #     # For buttons, process even if text is duplicated
-    #     elem_id = self.actions_mapping.add_action(elem, 'clickable')
-    #     tag = elem.tag_name.lower()
-    #     sensor_id = elem.get_attribute('data-sensor-id')
-    #
-    #     # Record processed text (but don't block processing)
-    #     if text:
-    #         self._record_processed_text(text, 'button')
-    #
-    #     attrs = []
-    #     if elem_id is not None:
-    #         attrs.append(f'id={elem_id}')
-    #
-    #     # Add data-sensor-id and data-type
-    #     if sensor_id:
-    #         attrs.append(f'data-sensor-id="{sensor_id}"')
-    #     attrs.append('data-type="clickable"')
-    #
-    #     # Use safe_attr_for_locator to get DOM raw href value
-    #     # This way the href shown in abstract page matches DOM and won't be normalized to absolute URL
-    #     href = self.safe_attr_for_locator(elem, 'href')
-    #     if href:
-    #         attrs.append(f'href="{href}"')
-    #         if not text:
-    #             text = href
-    #
-    #     role = self.safe_attr(elem, 'role')
-    #     if role == 'button':
-    #         attrs.append('role="button"')
-    #
-    #     routerlink = self.safe_attr(elem, 'routerlink')
-    #     if routerlink:
-    #         attrs.append(f'routerlink="{routerlink}"')
-    #
-    #     # If button tag but no text, try to get aria-label
-    #     if tag == 'button' and not text:
-    #         text = self.safe_attr(elem, 'aria-label')
-    #         if not text:
-    #             return None  # Skip buttons with no meaningful text
-    #
-    #     attrs_str = ' '.join(attrs) if attrs else ''
-    #
-    #     # For button tags, use button instead of original tag name
-    #     if tag in ['button', 'input']:
-    #         return f'<button {attrs_str}>{text}</button>'.strip()
-    #     else:
-    #         return f'<{tag} {attrs_str}>{text}</{tag}>'.strip()
-
     def _process_clickable(self, elem):
         """Process clickable elements - fix text retrieval issue"""
         # Fix: changed to True here to ensure text inside <span>Login</span> can be retrieved
@@ -1008,55 +878,6 @@ class Sensors:
         return f'<input {attrs_str}>{label}</input>'
 
     def _format_select(self, elem, field_id):
-        # ================== DEBUG START ==================
-        # Only perform detailed diagnostics for the problematic organizationId
-        is_debug_target = "organizationId" in self.safe_attr(elem, 'name')
-
-        if is_debug_target:
-            import time
-            import os
-
-            print(f"\n{'='*20} [DEBUG START: OrganizationId] {'='*20}")
-
-            # --- Phase 1: T=0s ---
-            print(f"[Time T=0s] Current Element HTML:")
-            print(elem.get_attribute('outerHTML'))
-
-            # Save T=0 complete source code to file
-            src_t0 = self.driver.page_source
-            with open("debug_source_t0.html", "w", encoding="utf-8") as f:
-                f.write(src_t0)
-            print(f"[Time T=0s] Complete source code saved to: debug_source_t0.html (length: {len(src_t0)})")
-
-            print(f"\n... Simulating delayed wait of 4 seconds ...")
-            time.sleep(4)
-
-            # --- Phase 2: T=4s ---
-            print(f"[Time T+4s] Element HTML after waiting:")
-
-            # Note: if DOM refreshed, elem may be stale
-            try:
-                print(elem.get_attribute('outerHTML'))
-            except Exception as e:
-                print(f"Element Stale (indicates DOM did refresh): {e}")
-                # Try to re-fetch
-                try:
-                    new_elem = self.driver.find_element(By.NAME, "organizationId")
-                    print(f"[Time T+4s] Re-fetched Element HTML:")
-                    print(new_elem.get_attribute('outerHTML'))
-                except:
-                    print("Unable to re-fetch element")
-
-            # Save T=4 complete source code to file
-            src_t4 = self.driver.page_source
-            with open("debug_source_t4.html", "w", encoding="utf-8") as f:
-                f.write(src_t4)
-            print(f"[Time T+4s] Complete source code saved to: debug_source_t4.html (length: {len(src_t4)})")
-
-            print(f"{'='*20} [DEBUG END] {'='*20}\n")
-        # ================== DEBUG END ==================
-
-
         """Format select element"""
         sensor_id = elem.get_attribute('data-sensor-id')
 
@@ -1185,23 +1006,6 @@ class Sensors:
 
             # Clean text - filter Material icon text
             text = re.sub(r'\s+', ' ', text).strip()
-
-            # # Filter out pure icon text
-            # icon_texts = ['menu', 'account_circle', 'shopping_cart', 'language',
-            #              'feedback', 'sentiment_dissatisfied', 'chat', 'business_center',
-            #              'camera', 'card_membership', 'school', 'power_settings_new',
-            #              'expand_more', 'close', 'search', 'expand_less']
-            #
-            # # If text only contains icon names, return empty
-            # if text in icon_texts:
-            #     return ''
-            #
-            # # If text starts with icon name, remove the icon part
-            # for icon in icon_texts:
-            #     if text.startswith(icon + ' '):
-            #         text = text[len(icon)+1:].strip()
-            #     elif text.endswith(' ' + icon):
-            #         text = text[:-len(icon)-1].strip()
 
             return text[:500] if text else ''  # Limit length
 
@@ -1392,21 +1196,21 @@ class Sensors:
         event_id_offset = max_element_id + 1
         # Set event_mapping start ID
         self.event_mapping.id_counter = event_id_offset
-        print(f"[Sensors] Event ID start value: {event_id_offset} (element max ID: {max_element_id})")
+        print(f"[DOMSemanticExtractor] Event ID start value: {event_id_offset} (element max ID: {max_element_id})")
 
         try:
             # 1. Read event data
             events_data = self.driver.execute_script("return window.added_events || [];")
 
             if not events_data:
-                print(f"[Sensors] No events captured")
+                print(f"[DOMSemanticExtractor] No events captured")
                 return ""
 
-            print(f"[Sensors] Captured {len(events_data)} raw events")
+            print(f"[DOMSemanticExtractor] Captured {len(events_data)} raw events")
 
             # 2. Filter meaningless events
             events_data = [e for e in events_data if self._is_meaningful_event(e.get('event', ''))]
-            print(f"[Sensors] {len(events_data)} meaningful events after filtering")
+            print(f"[DOMSemanticExtractor] {len(events_data)} meaningful events after filtering")
 
             # 3. Group by container (choose highest priority event for same container)
             container_events = {}
@@ -1458,17 +1262,17 @@ class Sensors:
                         )
 
                 except NoSuchElementException:
-                    print(f"[Sensors] XPath locating failed: {addr[:50]}...")
+                    print(f"[DOMSemanticExtractor] XPath locating failed: {addr[:50]}...")
                     continue
                 except Exception as e:
-                    print(f"[Sensors] Failed to process event: {e}")
+                    print(f"[DOMSemanticExtractor] Failed to process event: {e}")
                     continue
 
-            print(f"[Sensors] Generated {len(abstracts)} event abstractions")
+            print(f"[DOMSemanticExtractor] Generated {len(abstracts)} event abstractions")
             return '\n'.join(abstracts)
 
         except Exception as e:
-            print(f"[Sensors] Failed to extract events: {e}")
+            print(f"[DOMSemanticExtractor] Failed to extract events: {e}")
             import traceback
             traceback.print_exc()
             return ""

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Optional, Union
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -17,8 +17,6 @@ class Actuators:
     """
     Executor for common web actions:
     - execute_action_by_id(action_id, **kwargs) smart dispatch (most universal)
-    - click_by_id / type_text_by_id / select_by_id / set_checkbox_by_id / select_radio_by_id ...
-    - fill_form(form_id, data) / submit_form(form_id, submit_id=None)
     """
     DEFAULT_TEXT = "test"           # Default value for text input
     DEFAULT_TEXTAREA = "hello"      # Default value for textarea
@@ -58,8 +56,23 @@ class Actuators:
 
             elif action_type == "form":
                 # Handle form submission
-                if value == "submit":  # Can pass submit info via kwargs
-                    return self.submit_form(action_id)
+                if value == "submit":
+                    # Find submit control within form and click, or call form.submit()
+                    try:
+                        candidates = element.find_elements(
+                            By.CSS_SELECTOR,
+                            'input[type="submit"], button[type="submit"], button:not([type]), input[type="image"]'
+                        )
+                        if candidates:
+                            return self._safe_click(candidates[0])
+                    except Exception:
+                        pass
+                    try:
+                        self.driver.execute_script("arguments[0].submit();", element)
+                        return True
+                    except Exception as e:
+                        print(f"[Actuators] form.submit() failed: {e}")
+                        return False
                 return True
 
             elif action_type.startswith("input"):
@@ -170,150 +183,6 @@ class Actuators:
             return False
         except Exception as e:
             print(f"[Actuators] Material Select failed: {e}")
-            return False
-
-    # ======= Convenience methods =======
-    def click_by_id(self, action_id: int) -> bool:
-        return self.execute_action_by_id(action_id)
-
-    def type_text_by_id(self, action_id: int, text: str, enter: bool=False) -> bool:
-        return self.execute_action_by_id(action_id, text=text, enter=enter)
-
-    def select_by_id(self, action_id: int,
-                     value: Optional[Union[str, int]] = None,
-                     text: Optional[Union[str, int]] = None,
-                     index: Optional[int] = None,
-                     values: Optional[Iterable[Union[str, int]]] = None,
-                     texts: Optional[Iterable[Union[str, int]]] = None) -> bool:
-        return self.execute_action_by_id(action_id, value=value, text=text,
-                                         index=index, values=values, texts=texts)
-
-    def set_checkbox_by_id(self, action_id: int, checked: bool=True) -> bool:
-        return self.execute_action_by_id(action_id, checked=checked)
-
-    def toggle_checkbox_by_id(self, action_id: int) -> bool:
-        return self.execute_action_by_id(action_id, toggle=True)
-
-    def select_radio_by_id(self, action_id: int,
-                           value: Optional[str]=None,
-                           label: Optional[str]=None,
-                           index: Optional[int]=None) -> bool:
-        return self.execute_action_by_id(action_id, value=value, label=label, index=index)
-
-    # ======= Form-level operations =======
-    def fill_form(self, form_id: int, data: Dict[str, Any]) -> bool:
-        """
-        data keys first match field's name, then id.
-        Value types:
-          - text/textarea: str
-          - checkbox: bool
-          - radio: str (by value) or {'label': '...'} or {'index': 0}
-          - select: str/int or list[str|int] (multi-select)
-        """
-        actions = self.sensors.get_actions_mapping()
-        form_elem = actions.get_action_elem(form_id)
-        if form_elem is None:
-            print(f"[Actuators] Form not found: id={form_id}")
-            return False
-
-        fields = self.sensors.get_form_fields(form_elem)
-        ok = True
-        for field in fields:
-            try:
-                tag = (field.tag_name or '').lower()
-                f_name = (field.get_attribute('name') or '').strip()
-                f_id = (field.get_attribute('id') or '').strip()
-
-                key = None
-                if f_name and f_name in data:
-                    key = f_name
-                elif f_id and f_id in data:
-                    key = f_id
-                else:
-                    # Not in data, skip
-                    continue
-
-                val = data[key]
-                # Find this field's id in actions_mapping (for dispatch)
-                # Since Sensors also add_action for fields, could use reverse lookup interface (if available)
-                # But here we directly call handlers based on tag/type, which is faster.
-                if tag == 'input':
-                    subtype = (field.get_attribute('type') or 'text').lower()
-                    if subtype in {'text','password','email','search','tel','url','number',
-                                   'date','datetime-local','month','week','time','color'}:
-                        self._handle_text_input(field, text=str(val))
-                    elif subtype == 'file':
-                        self._handle_file_input(field, file_path=str(val))
-                    elif subtype == 'checkbox':
-                        if isinstance(val, bool):
-                            self._handle_checkbox(field, checked=val)
-                        else:
-                            # Not bool, ignore
-                            pass
-                    elif subtype == 'radio':
-                        # Radio is a group operation: find same-name group
-                        self._handle_radio(field,
-                                           value=val if isinstance(val, str) else None,
-                                           label=val.get('label') if isinstance(val, dict) else None,
-                                           index=val.get('index') if isinstance(val, dict) else None)
-                    else:
-                        # Other unknown input, treat as text
-                        self._handle_text_input(field, text=str(val))
-                elif tag == 'select':
-                    # Single or multiple values
-                    if isinstance(val, (list, tuple, set)):
-                        self._handle_select(field, values=list(val), texts=None)
-                    else:
-                        # Single value: try by text/value/index
-                        self._handle_select(field, value=val, text=val if isinstance(val, str) else None)
-                elif tag == 'textarea':
-                    self._handle_textarea(field, text=str(val))
-                else:
-                    pass
-            except Exception as e:
-                print(f"[Actuators] Failed to fill field name/id={f_name or f_id} err={e}")
-                ok = False
-        return ok
-
-    def submit_form(self, form_id: int, submit_id: Optional[int]=None) -> bool:
-        """
-        Preferentially click explicit submit control; if not found, call form.submit()
-        """
-        actions = self.sensors.get_actions_mapping()
-        form_elem = actions.get_action_elem(form_id)
-        if form_elem is None:
-            print(f"[Actuators] Form not found: id={form_id}")
-            return False
-
-        # If submit_id specified, click it first
-        if submit_id is not None:
-            submit_elem = actions.get_action_elem(submit_id)
-            if submit_elem is None:
-                print(f"[Actuators] Specified submit_id does not exist: {submit_id}")
-                return False
-            return self._safe_click(submit_elem)
-
-        # Find submit control within form
-        try:
-            submit = None
-            # Common submit controls
-            candidates = form_elem.find_elements(
-                By.CSS_SELECTOR,
-                'input[type="submit"], button[type="submit"], button:not([type]), input[type="image"]'
-            )
-            if candidates:
-                submit = candidates[0]
-            if submit:
-                return self._safe_click(submit)
-        except StaleElementReferenceException:
-            pass
-
-        # Fallback: native submit
-        try:
-            self.driver.execute_script("arguments[0].submit();", form_elem)
-            return True
-        except WebDriverException as e:
-            print(f"[Actuators] form.submit() failed: {e}")
             return False
 
     # ======= Type-specific handlers =======
@@ -463,20 +332,6 @@ class Actuators:
         import time
         time.sleep(0.8)
 
-    # Original implementation (disabled to avoid redundant element access)
-    # def _wait_interactable(self, element):
-    #     # Avoid element_to_be_clickable's locator requirement, use custom wait here
-    #     self.wait.until(lambda d: self._is_displayed_and_enabled(element))
-
-    # def _is_displayed_and_enabled(self, element) -> bool:
-    #     try:
-    #         return element.is_displayed() and element.is_enabled()
-    #     except StaleElementReferenceException:
-    #         return False
-
-    def _is_displayed_and_enabled(self, element) -> bool:
-        return True
-
     def _safe_click(self, element) -> bool:
         try:
             self._wait_interactable(element)
@@ -490,27 +345,3 @@ class Actuators:
             print(f"[Actuators] Click failed: {e}")
             return False
 
-    def _short_id(self, element) -> str:
-        # For naming screenshots: prefer element id/name, otherwise use memory id
-        try:
-            eid = (element.get_attribute('id') or element.get_attribute('name') or '').strip()
-            return eid if eid else str(id(element))
-        except StaleElementReferenceException:
-            return "stale"
-
-    def _get_label_text_for_input(self, input_elem) -> str:
-        try:
-            input_id = input_elem.get_attribute('id')
-            if input_id:
-                lbl = self.driver.find_element(By.XPATH, f'//label[@for="{input_id}"]')
-                if lbl and lbl.text:
-                    return lbl.text.strip()
-        except Exception:
-            pass
-        try:
-            lbl_wrap = input_elem.find_element(By.XPATH, 'ancestor::label[1]')
-            if lbl_wrap and lbl_wrap.text:
-                return lbl_wrap.text.strip()
-        except Exception:
-            pass
-        return ""

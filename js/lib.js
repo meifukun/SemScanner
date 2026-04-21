@@ -126,24 +126,12 @@
  *
  */
 
-// ==================== 🔍 DEBUG: Error capture ====================
 window.wrapper_errors = [];
 window.wrapper_debug_logs = [];
-// ====================================================================
-
-// Test for send wrapper (TODO)
-need_to_wait = false;
-var original = XMLHttpRequest.prototype['open'];
-XMLHttpRequest.prototype['open'] = function() {
-  need_to_wait = true;
-  return original.apply(this, arguments);
-}
-// End of test 
 
 function callbackWrap(object, property, argumentIndex, wrapperFactory) {
 	var original = object[property];
 	object[property] = function() {
-		// 🔍 DEBUG: Capture wrapper execution errors
 		try {
 			wrapperFactory(this, arguments);
 		} catch (e) {
@@ -247,7 +235,6 @@ function getXPath(element) {
 	try {
 		var xpath = '';
 
-    // Updated by Benjamin
     if (element.id) {
       return '//*[@id="'+element.id+'"]';
     }
@@ -314,16 +301,15 @@ function addEventListenerWrapper(elem, args) {
 	html_class = elem.className;
   //console.log("AddEventLIstenerWrapper: " + tag + " - Event: " + args[0] + " ID " + id)
 
-	// ✅ Use enhanced getXPath (supports id/aria-label/name/data-*/relative path)
+	// Use enhanced getXPath (supports id/aria-label/name/data-*/relative path)
 	dom_adress = getXPath(elem);
 
-  // ✅ Skip this event if XPath generation fails (no hash ID fallback)
+  // Skip this event if XPath generation fails (no hash ID fallback)
   if( !dom_adress ) {
     console.log("No XPath for element, skipping event:", args[0], tag);
     return;  // Skip, do not record this event
   }
 
-	// 🔍 DEBUG: Capture MD5 errors
 	var function_id;
 	try {
 		function_id = MD5(args[1].toString());
@@ -370,8 +356,7 @@ function addEventListenerWrapper(elem, args) {
 					"tag" : tag,
 					"class" : html_class
 				}
-				resp = JSON.stringify(resp)
-				jswrapper.add_eventListener_to_element(resp)
+				added_events.push( resp )
 			}
 		}
 		for (i = 0; i < selects.length; i++) {
@@ -389,8 +374,7 @@ function addEventListenerWrapper(elem, args) {
 				"tag" : tag,
 				"class" : html_class
 			}
-			resp = JSON.stringify(resp)
-			jswrapper.add_eventListener_to_element(resp)
+			added_events.push( resp )
 		}
 		for (xx = 0; xx < options.length; xx++) {
 			element = options[i]
@@ -407,8 +391,7 @@ function addEventListenerWrapper(elem, args) {
 				"tag" : tag,
 				"class" : html_class
 			}
-			resp = JSON.stringify(resp)
-			jswrapper.add_eventListener_to_element(resp)
+			added_events.push( resp )
 		}
 	}
     if (tag == "TABLE" && args[0] == "click"){

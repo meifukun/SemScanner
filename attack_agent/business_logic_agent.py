@@ -1,5 +1,5 @@
 """
-Business Logic Agent - （）
+Business Logic Agent - ()
 """
 
 from typing import Dict, Any, List, Optional
@@ -15,14 +15,12 @@ class BusinessLogicAgent:
     """
     Agent -
     
-    ：
-    1. AttackTask（+）
+    1. AttackTask(+)
     2. /
     3. curl
     4. LLM
     
-    ：（）
-    ：（IDOR，）
+    :(IDOR, )
     """
     
     def __init__(self, client, log_dir: str = "output/attack_logs/business_logic",
@@ -45,7 +43,7 @@ class BusinessLogicAgent:
             pass
     
     def _load_analysis_prompt(self) -> str:
-        """prompt（）"""
+        """prompt()"""
         return """You are a security testing expert analyzing business logic vulnerabilities.
 
 Your task: Given a request and a task description, generate executable commands to test the business logic vulnerability.
@@ -222,83 +220,6 @@ Generate your analysis and test commands:
     """
     
 
-    # def test_multi_step(self, task_description: str,
-    #                    target_request: Dict[str, Any],
-    #                    accounts: List[str],
-    #                    account_manager) -> Dict[str, Any]:
-    #     """
-    #     （，IDOR）
-        
-    #     Args:
-    #         task_description: （"AB"）
-    #         target_request:
-    #         accounts: （["user1", "user2"]）
-    #         account_manager:
-        
-    #     Returns:
-    #         {
-    #             "vulnerable": True/False/None,
-    #             "steps_executed": int,
-    #             "analysis": str,
-    #             "step_results": List[Dict]
-    #         }
-    #     """
-    #     self._log(f"[BusinessLogic] Testing multi-step task:")
-    #     self._log(f"  Description: {task_description}")
-    #     self._log(f"  Accounts: {accounts}")
-        
-    #     step_results = []
-        
-    #     for account_id in accounts:
-    #         self._log(f"  Step: {account_id} -> {target_request.get('method')} {target_request.get('url')}")
-            
-    #         credentials = account_manager.get_credentials(account_id)
-    #         if not credentials:
-    #             self._log(f"    ⚠️  Account not logged in: {account_id}")
-    #             step_results.append({
-    #                 "account": account_id,
-    #                 "error": "Account not logged in"
-    #             })
-    #             continue
-            
-    #         from attack_agent.request_utils import append_credentials_to_curl
-    #         base_curl = self._build_base_curl_command(target_request)
-    #         full_curl = append_credentials_to_curl(base_curl, credentials)
-    #         result = self._execute_curl_command(full_curl)
-
-    #         step_results.append({
-    #             "account": account_id,
-    #             "command": full_curl,
-    #             "status": result.get("status", 0),
-    #             "body": result.get("body", "")
-    #         })
-
-    #         self._log(f"    ✓ Executed (curl_exit_code: {result.get('curl_exit_code', 'N/A')})")
-    #         http_status = result.get("status", 0)
-    #         if http_status > 0:
-    #             self._log(f"    HTTP Status: {http_status}")
-    #         response_body = result.get("body", "")
-    #         self._log(f"    Response length: {len(response_body)} bytes")
-    #         self._log(f"    Response: {response_body}")
-    #         if result.get("stderr"):
-    #             self._log(f"    Stderr: {result['stderr']}")
-        
-    #     judgment = self._judge_multi_step_vulnerability(
-    #         task_description,
-    #         step_results
-    #     )
-        
-    #     vulnerable = judgment.get("vulnerable", False)
-        
-    #     self._log(f"  Result: {'VULNERABLE' if vulnerable else 'SAFE'}")
-        
-    #     return {
-    #         "vulnerable": vulnerable,
-    #         "steps_executed": len(step_results),
-    #         "analysis": judgment.get("analysis", ""),
-    #         "step_results": step_results
-    #     }
-    
     def _generate_test_commands(self, task_description: str,
                                 target_request: Dict[str, Any],
                                 credentials: Dict[str, Any]) -> tuple:
@@ -547,64 +468,10 @@ Generate your analysis and test commands:
                 "analysis": str(e)
             }
     
-    # def _judge_multi_step_vulnerability(self, task_description: str,
-    #                                    step_results: List[Dict]) -> Dict[str, Any]:
-    #     """
-    #     LLM
-        
-    #     Returns:
-    #         {vulnerable: bool, analysis: str}
-    #     """
-    #     results_text = ""
-    #     for result in step_results:
-    #         account = result.get("account", "unknown")
-    #         results_text += f"\nAccount: {account}\n"
-            
-    #         if "error" in result:
-    #             results_text += f"Error: {result['error']}\n"
-    #         else:
-    #             results_text += f"Command: {result['command']}\n"
-    #             results_text += f"Status: {result['status']}\n"
-    #             results_text += f"Response (truncated):\n{result['body']}\n"
-            
-    #         results_text += "-" * 40 + "\n"
-        
-    #     prompt = self._judgment_prompt.format(
-    #         task_description=task_description,
-    #         execution_results=results_text
-    #     )
-
-    #     try:
-    #         completion = self.client.chat.completions.create(
-    #             model=get_model_name("attack_agent"),
-    #             messages=[
-    #                 {"role": "system", "content": "You are a security analyst."},
-    #                 {"role": "user", "content": prompt}
-    #             ],
-    #             temperature=get_temperature("attack_agent")
-    #         )
-            
-    #         llm_output = completion.choices[0].message.content
-            
-    #         vulnerable = self._parse_vulnerability_conclusion(llm_output)
-            
-    #         return {
-    #             "vulnerable": vulnerable,
-    #             "analysis": llm_output
-    #         }
-        
-    #     except Exception as e:
-    #         self._log(f"[BusinessLogic] Multi-step judgment failed: {e}")
-    #         return {
-    #             "vulnerable": None,
-    #             "analysis": str(e)
-    #         }
-    
     def _parse_vulnerability_conclusion(self, llm_output: str) -> bool:
         """
         LLM
         
-        ：
         - "No vulnerability exists" -> False
         -  -> True
         """
@@ -635,7 +502,6 @@ Generate your analysis and test commands:
                         target_request: Dict[str, Any],
                         credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        （）
 
         Two-stage test flow:
         - Stage 1: initial attack (original prompt)
@@ -688,7 +554,7 @@ Generate your analysis and test commands:
                                      target_request: Dict[str, Any],
                                      credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute Stage 1 initial attack（）
+        Execute Stage 1 initial attack()
 
         Returns:
             Stage 1 result dict (includes test_results and llm_analysis for reflection)
@@ -796,9 +662,9 @@ Generate your analysis and test commands:
                                      credentials: Dict[str, Any],
                                      stage1_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Stage 2（）
+        Stage 2()
 
-        ：（{PAYLOAD}）
+        :({PAYLOAD})
         """
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix_single_point(stage1_context)
@@ -895,7 +761,7 @@ Generate your analysis and test commands:
         """
         suffix
 
-        ：{PAYLOAD}，
+        :{PAYLOAD}, 
         """
         test_commands = stage1_context.get("test_commands", [])
         test_results = stage1_context.get("test_results", [])
@@ -1035,7 +901,6 @@ Test_Commands:
 
     def _sample_test_results(self, test_results: List[Dict], max_samples: int = 10) -> List[Dict]:
         """
-        （ + ）
         """
         if not test_results:
             return []

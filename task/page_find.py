@@ -26,14 +26,6 @@ CONFIG = {
     "print_singletons": False,
 }
 
-# def _strip_fragment(u: str) -> str:
-#     """Remove fragment, but keep SPA routes (#/xxx)"""
-#     pu = urlparse(u)
-#     # If fragment looks like a route path (starts with /), keep it
-#     if pu.fragment and pu.fragment.startswith('/'):
-#         return u  # Keep as-is
-#     return urlunparse((pu.scheme, pu.netloc, pu.path or "/", pu.params, pu.query, ""))
-
 from urllib.parse import urlparse, urlunparse
 
 def _strip_fragment(u: str) -> str:
@@ -69,33 +61,6 @@ def _same_path_only(ua: str, ub: str) -> bool:
 
 def _url_equiv(ua: str, ub: str) -> bool:
     return ua == ub
-
-# def extract_main_text(html_str: str) -> str:
-#     if not html_str:
-#         return ""
-#     if BeautifulSoup is None:
-#         text = re.sub(r"(?is)<(script|style|noscript|template).*?</\1>", " ", html_str)
-#         text = re.sub(r"(?is)<[^>]+>", " ", text)
-#     else:
-#         try:
-#             soup = BeautifulSoup(html_str, "lxml")
-#         except Exception:
-#             soup = BeautifulSoup(html_str, "html.parser")
-#         for tag in soup(["script", "style", "noscript", "template"]):
-#             tag.decompose()
-#         for sel in [
-#             "header","footer","nav",".nav",".header",".footer",
-#             ".ads",".ad",".recommend",".sidebar",".breadcrumbs",".login",".subscribe"
-#         ]:
-#             for t in soup.select(sel):
-#                 t.decompose()
-#         text = soup.get_text(" ", strip=True)
-
-#     text = html.unescape(text)
-#     text = re.sub(r"\s+", " ", text).strip()
-#     text = re.sub(r"\b\d{1,2}:\d{2}(:\d{2})?\b", " <TIME> ", text)
-#     text = re.sub(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", " <DATE> ", text)
-#     return text
 
 def extract_main_text(html_str: str, driver=None) -> str:
     """
@@ -223,33 +188,6 @@ def text_simhash(text: str) -> int:
     return simhash_from_tokens(shingles(text, 5))
 
 SELF_CLOSING = {"br","hr","img","input","meta","link"}
-
-# def dom_tag_sequence(html_str: str) -> List[str]:
-#     if BeautifulSoup is None:
-#         return [m.lower() for m in re.findall(r"<\s*([a-zA-Z0-9]+)", html_str or "")]
-#     try:
-#         soup = BeautifulSoup(html_str, "lxml")
-#     except Exception:
-#         soup = BeautifulSoup(html_str, "html.parser")
-#     for tag in soup(["script","style","noscript","template"]):
-#         tag.decompose()
-#     for sel in [
-#         "header","footer","nav",".nav",".header",".footer",
-#         ".ads",".ad",".recommend",".sidebar",".breadcrumbs",".login",".subscribe"
-#     ]:
-#         for t in soup.select(sel):
-#             t.decompose()
-#     seq: List[str] = []
-#     def walk(node):
-#         if getattr(node, "name", None):
-#             name = node.name.lower()
-#             seq.append(name)
-#             for ch in getattr(node, "children", []):
-#                 walk(ch)
-#             if name not in SELF_CLOSING:
-#                 seq.append(f"/{name}")
-#     walk(soup.body or soup)
-#     return seq
 
 def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
     """
@@ -445,16 +383,16 @@ class ContentDedupeIndex:
 
     # ---------- Single item classification (for Crawler) ----------
     def classify(self, url: str, html_str: str, driver=None) -> Dict:
-        “””
+        """
         Returns:
           {
-            “is_new”: True/False,     # Whether this is a “new content cluster”
-            “cluster_id”: int,        # Assigned cluster
-            “repr_url”: str,          # Current cluster representative URL
-            “why”: { ... }            # Explanation (rule/distance/same path/URL equivalence)
+            "is_new": True/False,     # Whether this is a "new content cluster"
+            "cluster_id": int,        # Assigned cluster
+            "repr_url": str,          # Current cluster representative URL
+            "why": { ... }            # Explanation (rule/distance/same path/URL equivalence)
           }
         Also incrementally writes this URL to the index (persistent)
-        “””
+        """
         url_n = normalize_url(url)
         text = extract_main_text(html_str or "", driver=driver)
         tfp = text_simhash(text)
@@ -625,23 +563,6 @@ def main():
             # Optional: print full page source (if needed)
             show_full = input("\nShow full page source? (y/N): ").strip().lower()
             if show_full == 'y':
-                # print("\n[8] Full page source:")
-                # print("="*70)
-                # # Print first 2000 characters
-                # print("=== First 2000 characters ===")
-                # print(html_src[:2000])
-
-                # # Print middle 5000 characters
-                # print("\n=== Middle 5000 characters ===")
-                # mid_start = len(html_src) // 2 - 2500  # 2500 before midpoint
-                # mid_end = mid_start + 5000
-                # print(html_src[max(0, mid_start):mid_end])
-
-                # # Print last 2000 characters
-                # print("\n=== Last 2000 characters ===")
-                # print(html_src[-2000:])
-                # print("="*70)
-
                 print(html_src)
 
     finally:

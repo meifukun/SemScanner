@@ -100,48 +100,6 @@ def append_credentials_to_curl(curl_command: str, credentials: Dict) -> str:
     return append_credentials_to_command(curl_command, credentials, command_type="curl")
 
 
-def append_credentials_to_sqlmap(sqlmap_command: str, credentials: Dict) -> str:
-    """
-    Append credentials to sqlmap command (convenience wrapper)
-
-    Args:
-        sqlmap_command: sqlmap command (without auth)
-        credentials: account credentials
-
-    Returns:
-        Returns complete command with credentials
-    """
-    return append_credentials_to_command(sqlmap_command, credentials, command_type="sqlmap")
-
-
-# def extract_auth_token(credentials: Dict) -> Optional[str]:
-#     """
-#     localStorage/sessionStoragetoken
-    
-#     ：
-#     1.  "token"
-#     2.  "auth"
-#     3.  "jwt"
-#     4.  "access"
-    
-#     Returns:
-#         Returns extracted token string or None
-#     """
-# # merge localStorage and sessionStorage
-#     all_storage = {}
-#     all_storage.update(credentials.get("localStorage", {}))
-#     all_storage.update(credentials.get("sessionStorage", {}))
-    
-#     keywords = ['token', 'auth', 'jwt', 'access', 'refresh']
-    
-#     for keyword in keywords:
-#         for key, value in all_storage.items():
-#             if keyword in key.lower() and value:
-#                 if isinstance(value, str) and 10 < len(value) < 2000:
-#                     return value
-    
-#     return None
-
 def extract_auth_token(credentials: Dict) -> Optional[str]:
     """
     Smart extraction of auth token from localStorage/sessionStorage
@@ -262,36 +220,6 @@ def format_credentials_for_display(credentials: Dict) -> str:
     return "\n".join(lines) if lines else "No credentials"
 
 
-def format_credentials_for_llm(credentials: Dict) -> str:
-    """
-    Format credentials for LLM prompt (more detailed)
-    
-    Returns:
-        Returns credential info suitable for a prompt
-    """
-    lines = []
-    
-    cookies = credentials.get("cookies", [])
-    if cookies:
-        lines.append(f"Cookies:")
-        for c in cookies:
-            lines.append(f"  {c['name']}={c['value']}")
-    
-    # Headers
-    headers = credentials.get("headers", {})
-    if headers:
-        lines.append(f"\nHeaders:")
-        for key, value in headers.items():
-            lines.append(f"  {key}: {value}")
-    
-    token = extract_auth_token(credentials)
-    if token:
-        lines.append(f"\nAuth Token (from storage):")
-        lines.append(f"  {token}")
-    
-    return "\n".join(lines) if lines else "No credentials available"
-
-
 def safe_replace_payload(template: str, payload: str) -> str:
     """
     Safely replace {PAYLOAD} in a curl command template
@@ -351,11 +279,11 @@ def execute_curl_safe(template: str, payload: str, credentials: Dict,
         template: curl template containing {PAYLOAD}
         payload: payload to insert
         credentials:
-        timeout: （）
+        timeout: ()
 
     Returns:
         (stdout, stderr, returncode, final_cmd)
-        - final_cmd  curl （ shell ）
+        - final_cmd  curl ( shell )
     """
     import subprocess
     import shlex
@@ -429,15 +357,15 @@ def parse_http_status_from_response(response: str) -> tuple:
     """
     curlHTTP
 
-    curl -w "\\nHTTP_STATUS:%{http_code}"，
-    ，：HTTP_STATUS:200
+    curl -w "\\nHTTP_STATUS:%{http_code}", 
+    , :HTTP_STATUS:200
 
     Args:
         response: curlstdout
 
     Returns:
         (http_status_code: int, response_body: str)
-        ， (None, response)
+        ,  (None, response)
     """
     import re
 
@@ -454,24 +382,23 @@ def parse_http_status_from_response(response: str) -> tuple:
 
 def extract_useful_response(response: str, max_length: int = 3000) -> str:
     """
-    HTTP，token
+    HTTP, token
 
     LLMHTML、CSS、JS。
 
     Strategy:
     1.
-    2. （HTML / JSON / ）
-    3. HTML：、、
-    4. JSON：JSON（）
-    5. ：
+    2. (HTML / JSON / )
+    3. HTML:, , 
+    4. JSON:JSON()
     6. max_length
 
     Args:
         response: HTTP
-        max_length: （3000）
+        max_length: (3000)
 
     Returns:
-        （≤ max_length）
+        (≤ max_length)
 
     Examples:
         >>> html = "<html><title>Error</title><body>Invalid input</body></html>"
@@ -505,7 +432,6 @@ def _is_html_response(text: str) -> bool:
     """
     HTML
 
-    ，。
 
     Args:
         text:
@@ -562,10 +488,9 @@ def _extract_from_html_response(html: str, max_length: int) -> str:
     """
     HTML
 
-    ：
     1. <title>
     2. /
-    3. （script、style）
+    3. (script, style)
 
     Args:
         html: HTML
@@ -648,7 +573,7 @@ def _extract_from_html_response(html: str, max_length: int) -> str:
 
 def _clean_html_text(html: str) -> str:
     """
-    HTML，
+    HTML, 
 
     Args:
         html: HTML

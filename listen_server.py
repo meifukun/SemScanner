@@ -149,8 +149,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# curl http://127.0.0.1:9091/?data=nihaoa
 # nohup python listen_server.py --logfile http_captured.txt &> listener.log &
-# 3553974
 

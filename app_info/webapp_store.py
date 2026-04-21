@@ -15,7 +15,6 @@ class WebAppStore:
     - Nodes (PageInfo)
     - Edges (Edge)
     - Task run traces (TaskRunTrace)
-    - Optional graph snapshot export (graph.json / mermaid)
     Persistence strategy: primarily in-memory, with JSONL append for review/visualization
     """
 
@@ -34,8 +33,6 @@ class WebAppStore:
         # Persistence paths
         self.pages_jsonl = self.root / "pages.jsonl"
         self.edges_jsonl = self.root / "edges.jsonl"
-        self.graph_json = self.root / "graph.json"
-        self.graph_mermaid = self.root / "graph.mmd"
         self.traces_dir = self.root / "traces"
         self.traces_dir.mkdir(parents=True, exist_ok=True)
 
@@ -190,50 +187,6 @@ class WebAppStore:
         return self.edges
 
     # ---------------------------------------------------------------------
-    # Graph Export (optional)
-    # ---------------------------------------------------------------------
-    def export_graph(self) -> None:
-        """
-        Export a snapshot with more node attributes (not required, only for visualization or cold-starting other agents)
-        """
-        nodes = []
-        for url, p in self.pages.items():
-            nodes.append({
-                "id": url,
-                "title": p.title,
-                "abstract_page": p.abstract_page,
-                "outgoing_count": len(p.outgoing_links or []),
-                "request_count": len(p.network_requests or []),
-            })
-
-        edges = []
-        for e in self.edges:
-            edges.append({
-                "source": e.from_url,
-                "target": e.to_url,
-                "label": e.via_repr,
-                "kind": e.jump_kind,
-            })
-
-        graph = {"nodes": nodes, "edges": edges}
-        self.graph_json.write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def export_mermaid(self, max_nodes: int = 500) -> None:
-        """
-        Quick export of Mermaid flowchart (structure only, no attributes), for README/issue reproduction
-        """
-        lines = ["graph LR"]
-        # Node limit to avoid rendering lag for very large graphs
-        count = 0
-        for e in self.edges:
-            lines.append(f'    "{e.from_url}" -- "{e.via_repr or e.jump_kind}" --> "{e.to_url}"')
-            count += 1
-            if count >= max_nodes:
-                lines.append("    %% ... truncated ...")
-                break
-        self.graph_mermaid.write_text("\n".join(lines), encoding="utf-8")
-
-    # ---------------------------------------------------------------------
     # Task Trace
     # ---------------------------------------------------------------------
     def save_trace(self, trace: TaskRunTrace) -> None:
@@ -250,9 +203,3 @@ class WebAppStore:
             "edges": len(self.edges),
             "domains": len({urlparse(u).netloc for u in self.pages.keys()}),
         }
-
-    def clear_memory(self) -> None:
-        """Only clear the in-memory graph (does not delete persisted files)"""
-        self.pages.clear()
-        self.edges.clear()
-        self._edge_keys.clear()

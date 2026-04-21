@@ -19,7 +19,7 @@ TASK_PLANNING_MODEL = DEFAULT_MODEL
 # Attack planning model (AttackPlanningAgent)
 ATTACK_PLANNING_MODEL = DEFAULT_MODEL
 
-# Crawler Bridge model
+# Interaction Execution Agent model
 BRIDGE_MODEL = DEFAULT_MODEL
 
 # Task generator model (TaskGenerator)
@@ -27,6 +27,14 @@ TASK_GENERATOR_MODEL = DEFAULT_MODEL
 
 # Attack Agent model (SQL injection, XSS, XXE, etc.)
 ATTACK_AGENT_MODEL = DEFAULT_MODEL
+
+# ========== Beacon Listener Configuration ==========
+
+# URL of the beacon listener (listen_server.py) used for blind XSS confirmation.
+# When an XSS payload fires, the browser sends a callback to this URL.
+# Since Selenium Chrome runs on the same host as the listener, 127.0.0.1 is sufficient.
+# Change the port if listen_server.py is configured differently.
+BEACON_URL = "http://127.0.0.1:9091/"
 
 # ========== Other Optional Configuration ==========
 

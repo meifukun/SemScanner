@@ -10,9 +10,9 @@ from pathlib import Path
 from seleniumwire import webdriver  # Use selenium-wire to support network request capture
 from selenium.webdriver.common.by import By
 
-from crawl.sensors import Sensors
+from crawl.dom_semantic_extractor import DOMSemanticExtractor
 from crawl.Actuators import Actuators
-from crawl.Bridge import Bridge
+from crawl.interaction_execution_agent import InteractionExecutionAgent
 from capture.network_capture import NetworkCapture
 from crawl.tracer import ExecutionTracer
 from app_info.models import PageInfo, NetworkRequest, Edge
@@ -35,7 +35,7 @@ class IndependentTaskExecutor:
     - Write to shared store (with lock protection)
     """
 
-    def __init__(self, shared_store, client, base_url: str, task_gen=None, content_index=None, debug_session: bool = True):
+    def __init__(self, shared_store, client, base_url: str, task_gen=None, content_index=None):
         """
         Initialize the independent task executor
 
@@ -45,171 +45,17 @@ class IndependentTaskExecutor:
             base_url: Base URL
             task_gen: TaskGenerator instance (for new page task generation)
             content_index: ContentDedupeIndex instance (for page deduplication)
-            debug_session: Whether to enable session state debug (default True)
         """
         self.shared_store = shared_store
         self.client = client
         self.base_url = base_url
         self.task_gen = task_gen
         self.content_index = content_index  # Page dedup index
-        self.debug_session = debug_session  # Session debug switch
 
         # Current task context (for callbacks)
         self._current_driver: Optional[webdriver.Chrome] = None
-        self._current_sensors: Optional[Sensors] = None
+        self._current_sensors: Optional[DOMSemanticExtractor] = None
         self._current_network_capture: Optional[NetworkCapture] = None
-
-    def _capture_session_state(self, driver: webdriver.Chrome, task_id: str, phase: str) -> Dict[str, Any]:
-        """
-        Capture the driver's current session state (for debugging login state loss issues)
-
-        Args:
-            driver: WebDriver instance
-            task_id: Task ID
-            phase: Phase identifier ("BEFORE" or "AFTER")
-
-        Returns:
-            Session state dictionary
-        """
-        state = {
-            "task_id": task_id,
-            "phase": phase,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "current_url": None,
-            "page_title": None,
-            "cookies": [],
-            "localStorage": {},
-            "sessionStorage": {},
-            "error": None
-        }
-
-        try:
-            # Get current URL
-            state["current_url"] = driver.current_url
-        except Exception as e:
-            state["error"] = f"Failed to get URL: {e}"
-
-        try:
-            # Get page title
-            state["page_title"] = driver.title
-        except Exception as e:
-            state["error"] = f"Failed to get title: {e}"
-
-        try:
-            # Get all cookies
-            cookies = driver.get_cookies()
-            # Only keep key info to avoid overly long logs
-            state["cookies"] = [
-                {
-                    "name": c["name"],
-                    "value": c["value"][:20] + "..." if len(c.get("value", "")) > 20 else c.get("value", ""),
-                    "domain": c.get("domain"),
-                    "path": c.get("path"),
-                    "expiry": c.get("expiry")
-                }
-                for c in cookies
-            ]
-        except Exception as e:
-            state["error"] = f"Failed to get Cookies: {e}"
-
-        try:
-            # Get localStorage
-            local_storage = driver.execute_script("return JSON.stringify(localStorage);")
-            state["localStorage"] = local_storage if local_storage else "{}"
-        except Exception as e:
-            state["error"] = f"Failed to get localStorage: {e}"
-
-        try:
-            # Get sessionStorage
-            session_storage = driver.execute_script("return JSON.stringify(sessionStorage);")
-            state["sessionStorage"] = session_storage if session_storage else "{}"
-        except Exception as e:
-            state["error"] = f"Failed to get sessionStorage: {e}"
-
-        return state
-
-    def _log_session_state(self, driver: webdriver.Chrome, task_id: str, phase: str, log_file: str = None):
-        """
-        Record and print the driver's session state
-
-        Args:
-            driver: WebDriver instance
-            task_id: Task ID
-            phase: Phase identifier ("BEFORE" or "AFTER")
-            log_file: Optional log file path (if provided, also writes to file)
-        """
-        state = self._capture_session_state(driver, task_id, phase)
-
-        # Generate log content
-        log_lines = []
-        log_lines.append(f"\n{'='*70}")
-        log_lines.append(f"[SESSION-DEBUG] Task {task_id} - {phase}")
-        log_lines.append(f"{'='*70}")
-        log_lines.append(f"Time: {state['timestamp']}")
-        log_lines.append(f"Current URL: {state['current_url']}")
-        log_lines.append(f"Page title: {state['page_title']}")
-
-        # Detect if on login page (simple check)
-        is_login_page = False
-        if state['current_url']:
-            url_lower = state['current_url'].lower()
-            title_lower = (state['page_title'] or "").lower()
-            is_login_page = ('login' in url_lower or 'signin' in url_lower or
-                           'login' in title_lower or 'signin' in title_lower)
-
-        if is_login_page:
-            log_lines.append(f"WARNING: Possibly on login page!")
-
-        log_lines.append(f"\nCookies ({len(state['cookies'])} items):")
-        if state['cookies']:
-            for cookie in state['cookies']:
-                # Highlight session-related cookies
-                marker = "[KEY]" if any(k in cookie['name'].lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
-                log_lines.append(f"  {marker} {cookie['name']}: {cookie['value']}")
-                log_lines.append(f"     domain={cookie['domain']}, path={cookie['path']}")
-        else:
-            log_lines.append("  (no cookies)")
-
-        # localStorage and sessionStorage only print key names (values can be very long)
-        try:
-            ls_data = eval(state['localStorage']) if state['localStorage'] != "{}" else {}
-            if ls_data:
-                log_lines.append(f"\nLocalStorage ({len(ls_data)} items):")
-                for key in ls_data.keys():
-                    marker = "[KEY]" if any(k in key.lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
-                    log_lines.append(f"  {marker} {key}")
-            else:
-                log_lines.append(f"\nLocalStorage: (empty)")
-        except:
-            log_lines.append(f"\nLocalStorage: (parse failed)")
-
-        try:
-            ss_data = eval(state['sessionStorage']) if state['sessionStorage'] != "{}" else {}
-            if ss_data:
-                log_lines.append(f"\nSessionStorage ({len(ss_data)} items):")
-                for key in ss_data.keys():
-                    marker = "[KEY]" if any(k in key.lower() for k in ['session', 'token', 'auth', 'jwt']) else "  "
-                    log_lines.append(f"  {marker} {key}")
-            else:
-                log_lines.append(f"\nSessionStorage: (empty)")
-        except:
-            log_lines.append(f"\nSessionStorage: (parse failed)")
-
-        if state['error']:
-            log_lines.append(f"\nError: {state['error']}")
-
-        log_lines.append(f"{'='*70}\n")
-
-        # Generate log text
-        log_text = "\n".join(log_lines)
-
-        # Write to task log file (no longer output to stdout to reduce main log noise)
-        if log_file:
-            try:
-                with open(log_file, 'a', encoding='utf-8') as f:
-                    f.write(log_text + "\n")
-            except Exception as e:
-                print(f"[SESSION-DEBUG] Cannot write to log file: {e}")
 
     def execute_task(self, task: Task, driver: webdriver.Chrome, driver_info: str = "unknown") -> Dict[str, Any]:
         """
@@ -236,9 +82,9 @@ class IndependentTaskExecutor:
 
         try:
             # ===== Step 1: Create independent component chain =====
-            sensors = Sensors(driver, use_improved_locator=True)
+            sensors = DOMSemanticExtractor(driver, use_improved_locator=True)
             actuators = Actuators(sensors)
-            bridge = Bridge(
+            bridge = InteractionExecutionAgent(
                 sensors=sensors,
                 actuators=actuators,
                 client=self.client
@@ -273,21 +119,11 @@ class IndependentTaskExecutor:
             photo_dir = self.shared_store.traces_dir / f"{driver_info}_{task.task_id}"
             photo_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
 
-            # Create session debug log file path
-            session_log_file = photo_dir / "session_debug.log"
-
             # Load page abstract and mapping from shared store
             page = self.shared_store.get_page(task.initial_url)
             if page and page.abstract_page:
                 sensors.abstract_page = page.abstract_page
                 print(f"[IndependentExecutor] Loaded page abstract from cache ({len(page.abstract_page)} chars)")
-
-                # ===== DEBUG: Check cached mappings =====
-                print(f"[IndependentExecutor] [DEBUG] Cached mapping info:")
-                print(f"  - actions_mapping: {len(page.actions_mapping) if page.actions_mapping else 0} items")
-                print(f"  - event_mapping: {len(page.event_mapping) if page.event_mapping else 0} items")
-                if page.event_mapping:
-                    print(f"  - event_mapping keys: {list(page.event_mapping.keys())[:5]}...")  # Show first 5
 
                 # Restore actions_mapping
                 if page.actions_mapping:
@@ -310,29 +146,12 @@ class IndependentTaskExecutor:
                     max_event_id = max(int(k) for k in page.event_mapping.keys())
                     sensors.event_mapping.id_counter = max_event_id + 1
                     print(f"[IndependentExecutor] Restored {len(page.event_mapping)} event mappings")
-                    print(f"[IndependentExecutor] [DEBUG] Restored event IDs: {list(sensors.event_mapping.mapping.keys())[:5]}...")
                 else:
                     print(f"[IndependentExecutor] Warning: No event_mapping in page cache")
-
-                # ===== DEBUG: Verify restored state =====
-                print(f"[IndependentExecutor] [DEBUG] Post-restoration sensors state:")
-                print(f"  - sensors.actions_mapping: {len(sensors.actions_mapping.mapping)} items")
-                print(f"  - sensors.event_mapping: {len(sensors.event_mapping.mapping)} items")
             else:
                 # Fallback: rescan
                 print(f"[IndependentExecutor] Cache not found, rescanning")
                 sensors.update_abstract_page()
-
-                # DEBUG: Record scan log (write to file)
-                if hasattr(sensors, 'debug_scan_log'):
-                    debug_log_path = photo_dir / "scan_debug.log"
-                    with open(debug_log_path, 'w', encoding='utf-8') as f:
-                        f.write("\n".join(sensors.debug_scan_log))
-                    print(f"[IndependentExecutor] Scan debug log saved: {debug_log_path}")
-
-            # SESSION DEBUG: Record session state before task execution
-            if self.debug_session:
-                self._log_session_state(driver, task.task_id, "BEFORE", log_file=str(session_log_file))
 
             # ===== Step 4: Start trace recording =====
             tracer.start_task(task.task_id, task.description)
@@ -348,10 +167,6 @@ class IndependentTaskExecutor:
             if trace:
                 self.shared_store.save_trace(trace)  # Thread-safe
                 print(f"[IndependentExecutor] Trace saved")
-
-            # SESSION DEBUG: Record session state after task execution
-            if self.debug_session:
-                self._log_session_state(driver, task.task_id, "AFTER", log_file=str(session_log_file))
 
             print(f"[IndependentExecutor] Task completed: {task.task_id}\n")
 

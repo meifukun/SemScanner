@@ -3,7 +3,6 @@
 from __future__ import annotations
 from typing import List, Optional
 from pathlib import Path
-from task.tasks import Task
 from app_info.models import PageInfo
 from config.llm_config import get_model_name, get_temperature
 from utils.token_tracker import tracker
@@ -59,44 +58,11 @@ class TaskGenerator:
         # Use your newly defined Planner Prompt (containing PAGE CONTEXT and HISTORICAL TASKS sections)
         return prompt_path.read_text(encoding="utf-8")
 
-    def generate_navigation_for_page(self, page: PageInfo, historical: str = "") -> List[Task]:
-        """
-        Use LLM to generate several "root tasks" (avoid repeating history, try to expand coverage/depth)
-        """
-        tmpl = self._load_prompt_template(self.crawl_prompt_path)
-        page_context = self._build_page_context(page)
-
-        # Two-part input: System=template; User=assembled PAGE CONTEXT / HISTORICAL TASKS per specification
-        user_block = f"""--- INPUTS YOU RECEIVE ---
-PAGE CONTEXT:
-{page_context}
-
-HISTORICAL (do not repeat):
-{historical}"""
-        self._log_nav(f"[TaskGenerator] LLM input:\n{tmpl}\n{user_block}")
-        tracker.set_category("crawl_taskgen_nav")
-        completion = self.client.chat.completions.create(
-            model=get_model_name("task_generator"),
-            messages=[
-                {"role": "system", "content": tmpl},
-                {"role": "user",   "content": user_block},
-            ],
-            temperature=get_temperature("task_generator")
-        )
-        text = completion.choices[0].message.content
-        self._log_nav(f"[TaskGenerator] LLM output:\n{text}")
-
-        # Parse Tasks section
-        task_lines = self._parse_tasks(text)
-
-        return task_lines
-
     def generate_logic_for_page(self, page: PageInfo):
         """
         Use LLM to generate several "root tasks" (avoid repeating history, try to expand coverage/depth)
         """
         self._log_biz(f"generate_logic_task_for_page {page.url}")
-        # This would cause wordpress configuration errors
         # if "options" in page.url or "login" in page.url:
         if "login" in page.url:
             self._log_biz(f"[TaskGenerator] Skip logic task generation for {page.url}")
@@ -125,26 +91,8 @@ PAGE CONTEXT:
         # Parse Reasoning and Tasks sections
         reasoning, task_lines = self._parse_reasoning_and_tasks(text)
 
-        # # Build Tasks (task_id assigned by external queue; using -1 as placeholder here)
-        # tasks = [Task(task_id=-1, description=desc, initial_url=page.url)
-        #         for desc in task_lines]
-
-        # for t in tasks:
-        #     if getattr(t, "task_id", None) in (None, "-1"):
-        #         t.task_id = self.task_queue.next_task_id()
-        #         self._log_biz(t.task_id)
-        #     self._log_biz(t.task_id)
-        #     self.task_queue.push(t)
-
-        # return reasoning
         # Build task description list
         task_descriptions = [desc for desc in task_lines]
-
-        # Modified: Don't push to queue, return task list instead
-        # for t in tasks:
-        #     if getattr(t, "task_id", None) in (None, "-1"):
-        #         t.task_id = self.task_queue.next_task_id()
-        #     self.task_queue.push(t)
 
         # Return reasoning and task list
         return reasoning, task_descriptions

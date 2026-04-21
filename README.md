@@ -1,6 +1,6 @@
 # SemScanner
 
-An LLM-driven autonomous web application security testing framework. SemScanner automatically crawls web applications, identifies attack surfaces, plans and executes security tests, and generates vulnerability reports.
+SemScanner is an LLM-driven black-box web application vulnerability scanner. It operates in three phases: **Semantic-Driven Crawling**, **Audit Task Formulation**, and **Semantic-Guided Vulnerability Auditing**.
 
 ## Requirements
 
@@ -20,8 +20,6 @@ conda activate web-vul
 
 ### 2. Configure the LLM API Key
 
-SemScanner reads the API key from environment variables. Set them before running:
-
 ```bash
 export LLM_API_KEY="your-api-key-here"
 
@@ -29,15 +27,17 @@ export LLM_API_KEY="your-api-key-here"
 export LLM_BASE_URL="https://api.example.com/v1"
 ```
 
-The default model is configured in `config/llm_config.py`. You can change the model name there to match your API provider.
+The default model is configured in `config/llm_config.py`.
 
-### 3. Start the Beacon Listener (Optional)
+### 3. Configure and Start the Beacon Listener (Optional)
 
-The beacon listener is used to confirm out-of-band (OOB) vulnerabilities such as blind XSS and SSRF. It is optional and does not affect the main scanning workflow.
+The beacon listener is used to confirm blind XSS vulnerabilities. When an XSS payload fires in the browser, a callback is sent to this listener for verification.
 
 ```bash
 nohup python listen_server.py --logfile http_captured.txt &> listener.log &
 ```
+
+The beacon URL is configured via `BEACON_URL` in `config/llm_config.py` (default: `http://127.0.0.1:9091/`). Since the Selenium browser runs on the same host as the listener, `127.0.0.1` is typically sufficient. Change the port if `listen_server.py` is configured differently.
 
 ## Usage
 
@@ -56,95 +56,98 @@ python autonomous_test.py \
 | `--login_task` | No | Natural language description of the login action |
 | `--crawl_start_url` | No | URL to start crawling from after login |
 | `--output` | Yes | Output directory for results |
-| `--attack_planning_mode` | No | `llm` (default, intelligent planning) or `exhaustive` (test all types) |
 
 ### Examples
 
-**Application that requires login:**
-
 ```bash
+# With login
 python autonomous_test.py \
     --target_url "http://127.0.0.1:3000/login" \
     --login_task "Log in with username: admin, password: admin123" \
     --output "output/test1"
-```
 
-**Application without login:**
-
-```bash
+# Without login
 python autonomous_test.py \
     --target_url "http://127.0.0.1:3000" \
     --output "output/test2"
 ```
 
-**Exhaustive mode (for ablation study):**
-
-```bash
-python autonomous_test.py \
-    --target_url "http://127.0.0.1:3000/login" \
-    --login_task "Log in with username: admin, password: admin123" \
-    --output "output/experiment_exhaustive" \
-    --attack_planning_mode exhaustive
-```
-
 ## Workflow
 
-SemScanner operates as a six-phase pipeline:
-
 ```
-Phase 1: Login  -->  Phase 2: Deep Crawl  -->  Phase 3: Task Planning
-    -->  Phase 4: Attack Planning  -->  Phase 5: Attack Execution  -->  Phase 6: Report
+Semantic-Driven Crawling ──> Audit Task Formulation ──> Semantic-Guided Vulnerability Auditing
+                                   (pipelined: formulation streams tasks into a shared queue,
+                                    vulnerability agents consume and execute in parallel)
 ```
 
-1. **Login** - Automatically performs login based on the natural language description.
-2. **Deep Crawl** - Crawls the application from the specified URL (up to 50 pages by default).
-3. **Task Planning** - Identifies business-logic tasks within the application.
-4. **Attack Planning** - Analyzes captured requests and identifies potential attack surfaces.
-5. **Attack Execution** - Executes vulnerability tests against identified injection points.
-6. **Report Generation** - Aggregates results into a detailed report.
+Given a target URL and optional credentials, SemScanner first performs login (if specified), then runs the three phases sequentially. Audit Task Formulation and Vulnerability Auditing are pipelined via a producer-consumer queue for efficiency.
 
 ## Supported Vulnerability Types
 
-SemScanner primarily supports detection of the following three vulnerability categories:
+Primary:
+- **SQL Injection** — LLM-generated `sqlmap` invocations
+- **Cross-Site Scripting (XSS)** — OOB beacon-based confirmation for reflected, stored, and DOM-based XSS
+- **Business Logic Vulnerabilities** — LLM-driven differential testing for business constraint violations
 
-- **SQL Injection** - Leverages sqlmap for automated parameter testing.
-- **Cross-Site Scripting (XSS)** - Covers reflected, stored, and DOM-based XSS with beacon-based confirmation.
-- **Business Logic Flaws** - Includes IDOR, privilege escalation, and authentication bypass.
-
-Additionally, basic integration is provided for SSTI, SSRF, Command Injection, Path Traversal, and XXE.
+All agents use **Reflective Execution**: if the first attempt does not confirm a vulnerability, the agent feeds back the server response and retries with a revised strategy.
 
 ## Output
-
-Results are saved in the directory specified by `--output`:
 
 ```
 output/your_project/
   high_level_agent.log        # Main execution log
-  agent_state.json            # Current state snapshot
-  final_report.json           # Final report summary
+  agent_state.json            # Phase completion state
+  final_report.json           # Vulnerability report with evidence
   token_usage.json            # LLM token usage and cost breakdown
-  crawl/                      # Crawl results (pages, edges, graph)
-  task_planning/              # Task planning results
-  attack_execution/           # Attack execution results
+  crawl/                      # WASG data (pages, edges, deduplication index)
+  task_planning/              # Interaction execution traces with captured requests
+  attack_execution/
     attack_results.json       # Vulnerability detection results
 ```
 
 ## Project Structure
 
-```
-.
-  autonomous_test.py          # Entry point
-  listen_server.py            # OOB beacon listener (optional)
-  config/                     # LLM model configuration
-  high_level_agent/           # Top-level decision agent (6-phase pipeline)
-  crawl/                      # Browser-based crawler engine
-  task/                       # Task data structures and generation
-  plan_agent/                 # Task planning and attack planning agents
-  attack_agent/               # Vulnerability-specific attack agents
-  parallel/                   # Parallel execution components
-  account/                    # Login and account management
-  capture/                    # Network traffic capture
-  js/                         # Browser-injected scripts
-  prompt/                     # LLM prompt templates
-  utils/                      # Token usage tracking
-```
+The table below maps each code module to its role in the paper's framework.
+
+### Semantic-Driven Crawling
+
+Builds the **Web Application Semantic Graph (WASG)**: discovers pages via BFS with content-structural deduplication, extracts semantic representations, generates and executes interaction tasks, and records all triggered HTTP traffic.
+
+| Paper Component | Code | Description |
+|---|---|---|
+| DOM Semantic Extractor | `crawl/dom_semantic_extractor.py` (`DOMSemanticExtractor`) | Extracts a compact semantic representation from the live DOM; maintains an **ElementMapping** (`actions_mapping`) from element IDs to DOM locators |
+| Interaction Generator | `task/task_generator.py` (`TaskGenerator`) | LLM produces interaction tasks (single-step and exploratory) from the semantic representation |
+| Interaction Scheduling Agent | `plan_agent/task_planning_agent.py` (`TaskPlanningAgent`) | Coordinates tasks across pages into an execution schedule |
+| Interaction Execution Agent | `crawl/interaction_execution_agent.py` (`InteractionExecutionAgent`) | Closed-loop LLM-to-browser execution (perceive → plan → act → re-perceive) |
+| Page Discovery + Deduplication | `crawl/crawler.py` (`Crawler`, `ContentDedupeIndex`) | BFS crawling with dual SimHash fingerprint deduplication |
+| Network Interceptor | `capture/network_capture.py` + `crawl/tracer.py` | Captures HTTP traffic and records it into the WASG |
+| WASG Store | `app_info/webapp_store.py` (`WebAppStore`) + `app_info/models.py` | In-memory graph store for pages, edges, and network requests |
+
+### Audit Task Formulation
+
+| Paper Component | Code | Description |
+|---|---|---|
+| Audit Task Formulation | `plan_agent/attack_planning_agent.py` (`AttackPlanningAgent`) | Analyzes WASG requests with exclusion-based reasoning to generate targeted audit tasks |
+
+### Semantic-Guided Vulnerability Auditing
+
+| Paper Component | Code | Description |
+|---|---|---|
+| SQL Injection Agent | `attack_agent/sql_injection_agent.py` (`SQLInjectionAgent`) | LLM generates tailored `sqlmap` commands based on request format |
+| XSS Agent | `attack_agent/xss_agent.py` (`XSSAgent`) | LLM identifies injection points; payloads trigger OOB callbacks to the beacon listener; final page traversal detects stored XSS |
+| Business Logic Agent | `attack_agent/business_logic_agent.py` (`BusinessLogicAgent`) | Two-step: LLM generates constraint-violating requests, then verifies via differential response comparison |
+| Reflective Execution | `_execute_stage2_*` methods in each agent | Feeds first-attempt results back to LLM for strategy refinement |
+| Parallel Dispatcher | `attack_agent/attack_executor.py` (`AttackExecutor`) | Thread-pool executor consuming audit tasks from the pipeline queue |
+
+### Supporting Modules
+
+| Module | Description |
+|---|---|
+| `high_level_agent/decision_agent.py` | Top-level orchestrator: runs login, crawling, formulation, and auditing phases |
+| `parallel/` | Driver pool and producer-consumer scheduler for parallel interaction execution |
+| `account/` | Login state and credential management |
+| `js/` | Injected browser scripts (event listener capture, XSS OOB callbacks) |
+| `prompt/` | LLM prompt templates |
+| `config/llm_config.py` | Model names and temperature settings per agent |
+| `listen_server.py` | OOB beacon HTTP listener |
+| `utils/token_tracker.py` | LLM API token/cost tracking |

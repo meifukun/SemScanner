@@ -58,8 +58,7 @@ class AttackPlanningAgent:
                  prompt_file: str = "prompt/attack_plan_agent.txt",
                  ctf_description: Optional[str] = None,
                  default_account: str = None,
-                 include_trace_requests: bool = True,  # Default: enable trace requests
-                 planning_mode: str = "llm"):  # Planning mode: "llm" or "exhaustive"
+                 include_trace_requests: bool = True):  # Default: enable trace requests
         self.client = client
         self.crawler = crawler
         self.state = AttackState()
@@ -67,7 +66,6 @@ class AttackPlanningAgent:
         self.ctf_description = ctf_description  # CTF description info (optional)
         self.default_account = default_account  # Default account (deep uses deep account, shallow uses unauthenticated)
         self.include_trace_requests = include_trace_requests  # Whether to include trace requests
-        self.planning_mode = planning_mode  # Planning mode: llm (LLM intelligent planning) or exhaustive (exhaustive testing)
 
         # Set up logging
         log_base = Path(self.crawler.root_dir) / "attack_agent"
@@ -81,24 +79,8 @@ class AttackPlanningAgent:
         self.planned_attacks: List[Dict[str, Any]] = []  # Store all planned attack tasks
         self._cached_graph = None
 
-        # Ablation experiment: define all vulnerability types (for exhaustive mode)
-        self.all_vuln_types = [
-            "SQL_INJECTION",         # SQL injection
-            "XSS",                   # Cross-site scripting
-            "XXE",                   # XML external entity injection
-            "SSTI",                  # Server-side template injection
-            "SSRF",                  # Server-side request forgery
-            "CMDI",                  # Command injection
-            "PATH_TRAVERSAL",        # Path traversal
-            "BUSINESS_LOGIC"         # Business logic vulnerabilities (including IDOR, privilege escalation, authentication bypass, etc.)
-        ]
-
-        # Only load prompt template in llm mode
-        if self.planning_mode == "llm":
-            with open(prompt_file, 'r', encoding='utf-8') as f:
-                self.prompt_template = f.read()
-        else:
-            self.prompt_template = None
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            self.prompt_template = f.read()
     
     def _log(self, *args, sep=" ", end="\n"):
         """Unified logging function"""
@@ -647,10 +629,10 @@ class AttackPlanningAgent:
                                 if diff_actual:
                                     self._log(f"[Fuzzy Match] Actual extra fields: {list(diff_actual)[:5]}{'...' if len(diff_actual) > 5 else ''}")
                                 
-                                self._log(f"[Fuzzy Match] ✓ Match found with {similarity:.1%} similarity")
+                                self._log(f"[Fuzzy Match] [OK] Match found with {similarity:.1%} similarity")
                                 return True
                             else:
-                                self._log(f"[Fuzzy Match] ✗ Similarity {similarity:.1%} < 80%, skipping")
+                                self._log(f"[Fuzzy Match] [FAIL] Similarity {similarity:.1%} < 80%, skipping")
                     
                     except json.JSONDecodeError as e:
                         self._log(f"[Fuzzy Match] Failed to parse body as JSON: {e}")
@@ -794,7 +776,7 @@ class AttackPlanningAgent:
                             task_lines.append(line)
                 
                 if not task_lines:
-                    self._log("[AttackPlanningAgent] ⚠️ No valid task lines found")
+                    self._log("[AttackPlanningAgent] No valid task lines found")
                     return (None, None)
 
                 return (ActionType.ANALYZE_REQUESTS, {
@@ -856,37 +838,6 @@ class AttackPlanningAgent:
             "task_id": task_id.strip(),
             "vuln_type": vuln_type.strip().upper(),
             "ref_id": ref_id.strip(),
-            "description": description.strip()
-        }
-
-    def _parse_task_line_legacy(self, task_line: str) -> Optional[Dict]:
-        """
-        Parse legacy format (without METHOD URL)
-
-        Legacy format: [TASK001] SQL_INJECTION | admin | Test description
-        """
-        match = re.match(
-            r'\[(\w+)\]\s+([A-Z_]+)\s+\|\s+(.+?)\s+\|\s+(.+)',
-            task_line.strip()
-        )
-
-        if not match:
-            self._log(f"[Warning] Cannot parse task line (tried both new and legacy formats): {task_line}")
-            return None
-
-        task_id, vuln_type, account_part, description = match.groups()
-
-        if '->' in account_part:
-            accounts = [a.strip() for a in account_part.split('->')]
-        else:
-            accounts = [account_part.strip()]
-
-        return {
-            "task_id": task_id.strip(),
-            "vuln_type": vuln_type.strip().upper(),
-            "method": None,
-            "url": None,
-            "accounts": accounts,
             "description": description.strip()
         }
 
@@ -970,50 +921,6 @@ class AttackPlanningAgent:
 
         return attack_tasks
     
-    def _find_matching_request(self, selected_requests: List[Tuple[str, str, str]],
-                               description: str) -> Optional[Dict]:
-        """
-
-
-        Strategy:
-        1. HTTPURL
-        2. selected_requests
-        3. ， None（）
-
-        Args:
-            selected_requests: List of (method, url, body_schema) tuples
-
-        Returns:
-            （response）None
-        """
-        if not selected_requests:
-            return None
-
-        import re
-
-        method_url_pattern = r'\b(GET|POST|PUT|DELETE|PATCH)\s+([/\w\-\.?=&]+)'
-        matches = re.findall(method_url_pattern, description, re.IGNORECASE)
-
-        if matches:
-            for desc_method, desc_url in matches:
-                desc_method = desc_method.upper()
-
-                for req_tuple in selected_requests:
-                    if len(req_tuple) == 3:
-                        req_method, req_url, body_schema = req_tuple
-                    else:
-                        req_method, req_url = req_tuple[0], req_tuple[1]
-                        body_schema = None
-
-                    if req_method.upper() == desc_method and (
-                        desc_url in req_url or req_url.endswith(desc_url)
-                    ):
-                        full_request = self._get_or_create_request(req_method, req_url, body_schema)
-                        if full_request:
-                            return full_request
-
-        return None
-
     def _execute_skip_action(self, action_data: Dict) -> int:
         """
          Skip  (ID )
@@ -1056,11 +963,7 @@ class AttackPlanningAgent:
     
     def plan_and_execute(self, max_iterations: int = 100) -> Dict:
         """
-         -
-
-        🆕 ：
-        - llm: LLM（）
-        - exhaustive: ，
+        Plan and execute attacks using LLM intelligent planning.
 
         Returns:
             {
@@ -1071,10 +974,6 @@ class AttackPlanningAgent:
             }
         """
         self._cached_graph = None
-
-        if self.planning_mode == "exhaustive":
-            self._log("[AttackPlanningAgent] Using EXHAUSTIVE mode (no LLM)")
-            return self.plan_exhaustive(max_requests=None)
 
         self._log("[AttackPlanningAgent] Using LLM mode (intelligent planning)")
         self._log("[AttackPlanningAgent] Starting attack planning")
@@ -1127,7 +1026,7 @@ class AttackPlanningAgent:
 
             
             if action_type is None:
-                self._log(f"[AttackPlanningAgent] ⚠️ Invalid response")
+                self._log(f"[AttackPlanningAgent] Invalid response")
             elif action_type == ActionType.ANALYZE_REQUESTS:
                 tasks = self._execute_analyze_action(action_data)
                 all_tasks.extend(tasks)
@@ -1153,243 +1052,10 @@ class AttackPlanningAgent:
             "attack_history": self.state.attack_history
         }
     
-    def plan_exhaustive(self, max_requests: Optional[int] = None) -> Dict:
-        """
-        🆕  - （）
-
-        LLM，
-
-        Args:
-            max_requests: （None）
-
-        Returns:
-            {
-                "tested_requests": int,
-                "all_tasks": List[AttackTask],
-                "attack_history": List[Dict]
-            }
-        """
-        self._log("[AttackPlanningAgent - EXHAUSTIVE MODE] Starting exhaustive attack planning")
-        self._log(f"[Mode] Exhaustive (generate all vulnerability types for each request)")
-
-        all_tasks = []
-        task_counter = 0
-
-        all_requests = list(self.crawler.request_mapping.items())
-        total_requests = len(all_requests)
-
-        if max_requests:
-            all_requests = all_requests[:max_requests]
-            self._log(f"[Limit] Processing {len(all_requests)}/{total_requests} requests")
-        else:
-            self._log(f"[Processing] All {total_requests} requests")
-
-        self._log(f"[Vulnerability Types] {len(self.all_vuln_types)} types: {', '.join(self.all_vuln_types)}")
-        self._log(f"[Expected Tasks] {len(all_requests)} requests × {len(self.all_vuln_types)} types = {len(all_requests) * len(self.all_vuln_types)} tasks\n")
-
-        for idx, ((method, url), target_request) in enumerate(all_requests, 1):
-            self._log(f"[{idx}/{len(all_requests)}] Processing: {method} {url}")
-
-            for vuln_type in self.all_vuln_types:
-                task_counter += 1
-                task_id = f"TASK{task_counter:03d}"
-
-                task_description = self._generate_hardcoded_description(vuln_type, method, url)
-
-                task = AttackTask(
-                    task_id=task_id,
-                    task_description=task_description,
-                    vuln_type=vuln_type,
-                    target_request=target_request,
-                    account_identifier=self.default_account if self.default_account else "default_account"
-                )
-
-                all_tasks.append(task)
-
-                self.planned_attacks.append({
-                    "task_id": task_id,
-                    "task_description": task_description,
-                    "vuln_type": vuln_type,
-                    "account": task.account_identifier,
-                    "status": "planned",
-                    "target_request": {
-                        "method": target_request.get("method"),
-                        "url": target_request.get("url"),
-                        "headers": target_request.get("headers", {}),
-                        "query_params": target_request.get("query_params", {}),
-                        "body": target_request.get("body"),
-                        "response_status": target_request.get("response_status"),
-                        "response_headers": target_request.get("response_headers", {}),
-                        "response_body": target_request.get("response_body", "")
-                    }
-                })
-
-            body = target_request.get("body") if target_request else None
-            self.crawler.mark_request_processed(method, url, body)
-            key = self.crawler._make_dedup_key(method, url, body)
-            self.state.tested_requests.add(key)
-
-            if idx % 10 == 0:
-                self._log(f"  → Generated {len(all_tasks)} tasks so far...")
-
-        self._record_action(len(all_tasks))
-        self.state.total_tasks_generated = len(all_tasks)
-
-        self._save_tasks_to_json()
-
-        self._log(f"\n{'='*60}")
-        self._log("[AttackPlanningAgent - EXHAUSTIVE MODE] Final Statistics:")
-        self._log(f"  - Mode: Exhaustive (no LLM)")
-        self._log(f"  - Requests processed: {len(all_requests)}")
-        self._log(f"  - Vulnerability types: {len(self.all_vuln_types)}")
-        self._log(f"  - Total tasks generated: {len(all_tasks)}")
-        self._log(f"  - Average tasks/request: {len(all_tasks)/len(all_requests):.1f}")
-        self._log(f"{'='*60}\n")
-
-        return {
-            "tested_requests": len(self.state.tested_requests),
-            "all_tasks": all_tasks,
-            "attack_history": self.state.attack_history
-        }
-
-    def _generate_hardcoded_description(self, vuln_type: str, method: str, url: str) -> str:
-        """
-        🆕 （）
-
-        Args:
-            vuln_type:
-            method: HTTP method
-            url: URL
-
-        Returns:
-
-        """
-        descriptions = {
-            "SQL_INJECTION": f"Test if the {method} request to {url} is vulnerable to SQL injection",
-            "XSS": f"Test if the {method} request to {url} is vulnerable to Cross-Site Scripting (XSS)",
-            "XXE": f"Test if the {method} request to {url} is vulnerable to XML External Entity (XXE) injection",
-            "SSTI": f"Test if the {method} request to {url} is vulnerable to Server-Side Template Injection (SSTI)",
-            "SSRF": f"Test if the {method} request to {url} is vulnerable to Server-Side Request Forgery (SSRF)",
-            "CMDI": f"Test if the {method} request to {url} is vulnerable to Command Injection",
-            "PATH_TRAVERSAL": f"Test if the {method} request to {url} is vulnerable to Path Traversal",
-            "BUSINESS_LOGIC": f"Test if the {method} request to {url} has business logic vulnerabilities (IDOR, privilege escalation, authentication bypass, etc.)"
-        }
-
-        return descriptions.get(vuln_type, f"Test if the {method} request to {url} is vulnerable to {vuln_type}")
-
-    def plan_exhaustive_stream(self, task_queue):
-        """
-        🆕  - （）
-
-        LLM，，
-
-        Args:
-            task_queue: queue.Queue，
-
-        None
-        """
-        self._log("[AttackPlanningAgent - EXHAUSTIVE STREAMING] Starting")
-        self._log(f"[Mode] Exhaustive streaming (generate all vulnerability types for each request)")
-
-        task_counter = 0
-        total_tasks_generated = 0
-
-        try:
-            all_requests = list(self.crawler.request_mapping.items())
-            total_requests = len(all_requests)
-
-            self._log(f"[Processing] All {total_requests} requests")
-            self._log(f"[Vulnerability Types] {len(self.all_vuln_types)} types: {', '.join(self.all_vuln_types)}")
-            self._log(f"[Expected Tasks] {total_requests} requests × {len(self.all_vuln_types)} types = {total_requests * len(self.all_vuln_types)} tasks\n")
-
-            for idx, ((method, url), target_request) in enumerate(all_requests, 1):
-                self._log(f"[{idx}/{total_requests}] Processing: {method} {url}")
-
-                for vuln_type in self.all_vuln_types:
-                    task_counter += 1
-                    task_id = f"TASK{task_counter:03d}"
-
-                    task_description = self._generate_hardcoded_description(vuln_type, method, url)
-
-                    task = AttackTask(
-                        task_id=task_id,
-                        task_description=task_description,
-                        vuln_type=vuln_type,
-                        target_request=target_request,
-                        account_identifier=self.default_account if self.default_account else "default_account"
-                    )
-
-                    task_queue.put(task)
-                    total_tasks_generated += 1
-
-                    self.planned_attacks.append({
-                        "task_id": task_id,
-                        "task_description": task_description,
-                        "vuln_type": vuln_type,
-                        "account": task.account_identifier,
-                        "status": "planned",
-                        "target_request": {
-                            "method": target_request.get("method"),
-                            "url": target_request.get("url"),
-                            "headers": target_request.get("headers", {}),
-                            "query_params": target_request.get("query_params", {}),
-                            "body": target_request.get("body"),
-                            "response_status": target_request.get("response_status"),
-                            "response_headers": target_request.get("response_headers", {}),
-                            "response_body": target_request.get("response_body", "")
-                        }
-                    })
-
-                body = target_request.get("body") if target_request else None
-                self.crawler.mark_request_processed(method, url, body)
-                key = self.crawler._make_dedup_key(method, url, body)
-                self.state.tested_requests.add(key)
-
-                if idx % 10 == 0:
-                    self._log(f"  → Pushed {total_tasks_generated} tasks to queue so far...")
-
-            self._record_action(total_tasks_generated)
-            self.state.total_tasks_generated = total_tasks_generated
-
-            self._save_tasks_to_json()
-
-            self._log(f"\n{'='*60}")
-            self._log("[AttackPlanningAgent - EXHAUSTIVE STREAMING] Final Statistics:")
-            self._log(f"  - Mode: Exhaustive streaming (no LLM)")
-            self._log(f"  - Requests processed: {total_requests}")
-            self._log(f"  - Vulnerability types: {len(self.all_vuln_types)}")
-            self._log(f"  - Total tasks generated: {total_tasks_generated}")
-            self._log(f"  - Average tasks/request: {total_tasks_generated/total_requests:.1f}")
-            self._log(f"{'='*60}\n")
-
-        except Exception as e:
-            self._log(f"[AttackPlanningAgent - EXHAUSTIVE STREAMING] Error: {e}")
-            import traceback
-            self._log(traceback.format_exc())
-
-        finally:
-            try:
-                task_queue.put(None, timeout=30)
-                self._log("[AttackPlanningAgent - EXHAUSTIVE STREAMING] Complete - sent termination signal")
-            except Exception as e:
-                self._log(f"[AttackPlanningAgent - EXHAUSTIVE STREAMING] ⚠️ Failed to send termination signal: {e}")
-
-            return {
-                "tested_requests": len(self.state.tested_requests),
-                "total_tasks_generated": total_tasks_generated,
-                "attack_history": self.state.attack_history
-            }
-
-    def reset_state(self):
-        """Reset attack state"""
-        self.state = AttackState()
-        self._log("[AttackPlanningAgent] State reset")
-
     def _save_tasks_to_json(self):
         """
         JSON
 
-        ：
         {
             "total_tasks": int,
             "tasks": [
@@ -1418,22 +1084,14 @@ class AttackPlanningAgent:
 
     def plan_and_stream(self, task_queue, max_iterations: int = 100):
         """
-        🆕  - （）
-
-        🆕 ：
-        - llm: LLM，
-        - exhaustive: ，
+        Plan attacks using LLM mode, streaming tasks into the queue as they are generated.
 
         Args:
-            task_queue: queue.Queue，
-            max_iterations: （llm）
+            task_queue: queue.Queue to push tasks into
+            max_iterations: Maximum planning iterations
 
-        None
+        Returns None
         """
-        if self.planning_mode == "exhaustive":
-            self._log("[AttackPlanningAgent] Using EXHAUSTIVE mode (streaming, no LLM)")
-            return self.plan_exhaustive_stream(task_queue)
-
         self._log("[AttackPlanningAgent] Using LLM mode (streaming)")
         self._log("[AttackPlanningAgent] Starting streaming attack planning")
 
@@ -1485,11 +1143,11 @@ class AttackPlanningAgent:
 
                 if action_type is None:
                     consecutive_invalid_responses += 1
-                    self._log(f"[AttackPlanningAgent] ⚠️ Invalid response (consecutive: {consecutive_invalid_responses})")
+                    self._log(f"[AttackPlanningAgent] Invalid response (consecutive: {consecutive_invalid_responses})")
                     self._log("[AttackPlanningAgent] → Skipping this iteration, will retry in next iteration")
 
                     if consecutive_invalid_responses >= 5:
-                        self._log("[AttackPlanningAgent] ⚠️ Too many consecutive invalid responses (5+), stopping")
+                        self._log("[AttackPlanningAgent] Too many consecutive invalid responses (5+), stopping")
                         break
 
                     continue
@@ -1530,7 +1188,7 @@ class AttackPlanningAgent:
                 task_queue.put(None, timeout=30)
                 self._log("[AttackPlanningAgent] Streaming complete - sent termination signal")
             except Exception as e:
-                self._log(f"[AttackPlanningAgent] ⚠️ Failed to send termination signal (queue full?): {e}")
+                self._log(f"[AttackPlanningAgent] Failed to send termination signal (queue full?): {e}")
                 self._log("[AttackPlanningAgent] Executor should detect planning thread completion via join()")
 
             return {
