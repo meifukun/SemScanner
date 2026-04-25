@@ -9,7 +9,7 @@ Modify this file to change the model configuration across the entire framework.
 
 # Primary reasoning model (used for planning, attacks, etc.)
 # Change this to match the model name supported by your API provider.
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "deepseek-reasoner"
 
 # Optional: Configure different models for different scenarios below:
 
