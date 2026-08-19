@@ -1,0 +1,25 @@
+services:
+  db:
+    image: semscanner-ae-e-learning-db:1.0
+    environment:
+      MYSQL_DATABASE: vcs_db
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - e-learning-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=root mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  web:
+    image: semscanner-ae-e-learning:1.0
+    ports:
+      - "127.0.0.1:${ELEARNING_PORT:-8081}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  e-learning-db:

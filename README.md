@@ -4,18 +4,26 @@ SemScanner is an LLM-driven black-box web application vulnerability scanner. It 
 
 ## Requirements
 
+The requirements and setup steps in this section describe running
+SemScanner directly from the source tree. The pre-built Docker workflow for
+artifact evaluation is documented separately in [Prebuilt Docker Image](#prebuilt-docker-image).
+
+- A Linux `x86_64` host with at least 16 GB RAM
+- Conda
+- Docker Engine with the Compose v2 plugin
 - Python 3.11
-- Google Chrome
+- Google Chrome/Chromium
 - ChromeDriver (auto-managed via `webdriver-manager`)
 - An OpenAI-compatible LLM API
+- `curl`
 
-## Setup
+## Source-based Setup
 
 ### 1. Create the Conda Environment
 
 ```bash
-conda env create -f environment.yml
-conda activate web-vul
+conda env create -n semscanner -f environment.yml
+conda activate semscanner
 ```
 
 ### 2. Configure the LLM API Key
@@ -25,19 +33,96 @@ export LLM_API_KEY="your-api-key-here"
 
 # Optional: override the default API base URL (must be OpenAI-compatible)
 export LLM_BASE_URL="https://api.example.com/v1"
+
+# Optional: use the model name exposed by the selected endpoint
+export LLM_MODEL="your-model-name"
 ```
 
-The default model is configured in `config/llm_config.py`.
+If `LLM_MODEL` is unset, the model in `config/llm_config.py` is used.
 
-### 3. Configure and Start the Beacon Listener (Optional)
-
-The beacon listener is used to confirm blind XSS vulnerabilities. When an XSS payload fires in the browser, a callback is sent to this listener for verification.
+For artifact evaluation, keep attack execution sequential so that state-changing tests cannot interfere with one another:
 
 ```bash
-nohup python listen_server.py --logfile http_captured.txt &> listener.log &
+export SEMSCANNER_ATTACK_MAX_WORKERS=1
 ```
 
-The beacon URL is configured via `BEACON_URL` in `config/llm_config.py` (default: `http://127.0.0.1:9091/`). Since the Selenium browser runs on the same host as the listener, `127.0.0.1` is typically sufficient. Change the port if `listen_server.py` is configured differently.
+### 3. Default Timeouts
+
+The repository defaults are intended for unattended revision experiments. There is no default overall wall-clock limit for a whole scan; scan size is controlled by the crawler/page/task bounds. Do not wrap the scanner with shell-level commands such as `timeout 6h` unless you intentionally want an external cutoff.
+
+| Item | Default | Environment override |
+|---|---:|---|
+| LLM request | `300s` | `LLM_REQUEST_TIMEOUT` |
+| SQLMap subprocess | `600s` | `SEMSCANNER_SQLMAP_TIMEOUT` |
+| SQL task total timeout | unlimited | `SEMSCANNER_ATTACK_TASK_TIMEOUT_SQL` |
+| XSS task total timeout | `300s` | `SEMSCANNER_ATTACK_TASK_TIMEOUT_XSS` |
+| Business logic task total timeout | `420s` | `SEMSCANNER_ATTACK_TASK_TIMEOUT_BUSINESS` |
+| Replay curl before attack execution | `120s` | `SEMSCANNER_REPLAY_TIMEOUT` |
+| Single curl command in XSS/business agents | `120s` | `SEMSCANNER_CURL_TIMEOUT` |
+
+Notes:
+- SQL injection is limited at the `sqlmap` subprocess level only by default. The SQL task itself has no queue-level total timeout.
+- `0` or an invalid timeout value falls back to the default above.
+- Set a timeout variable to `none`, `inf`, `infinite`, or `unlimited` only when you explicitly want no limit for that layer.
+
+### 4. Configure and Start the XSS Beacon Listener
+
+The beacon listener is required for reliable XSS confirmation. When an injected XSS payload fires in the browser, the payload calls the beacon URL with `?data=<random_id>`, and `listen_server.py` appends that ID to a log file.
+
+Use one listener and one log for the evaluation. Multiple scans can share this listener because each XSS task generates a random beacon token.
+
+```bash
+SEMSCANNER_ARTIFACT_ROOT="$PWD"
+mkdir -p "$SEMSCANNER_ARTIFACT_ROOT/ae_runtime/xss_beacon"
+
+export SEMSCANNER_XSS_BEACON_URL="http://127.0.0.1:9091/"
+export SEMSCANNER_XSS_BEACON_LOG="$SEMSCANNER_ARTIFACT_ROOT/ae_runtime/xss_beacon/http_captured.txt"
+
+nohup python listen_server.py \
+    --bind 127.0.0.1 \
+    --port 9091 \
+    --logfile "$SEMSCANNER_XSS_BEACON_LOG" \
+    > "$SEMSCANNER_ARTIFACT_ROOT/ae_runtime/xss_beacon/listener.log" 2>&1 &
+echo $! > "$SEMSCANNER_ARTIFACT_ROOT/ae_runtime/xss_beacon/listener.pid"
+```
+
+The two XSS environment variables have different roles:
+
+| Variable | Purpose |
+|---|---|
+| `SEMSCANNER_XSS_BEACON_URL` | URL injected into Selenium browsers through `js/xss_xhr.js`; must point to the running listener. |
+| `SEMSCANNER_XSS_BEACON_LOG` | Local file that XSS agents read when checking whether a random ID was triggered. This must match the listener's `--logfile`. |
+
+Defaults and conventions:
+- If `SEMSCANNER_XSS_BEACON_URL` is not set, `config/llm_config.py` uses `http://127.0.0.1:9091/`.
+- For artifact evaluation, keep `SEMSCANNER_XSS_BEACON_LOG` under `ae_runtime/xss_beacon/` as shown above.
+- If `SEMSCANNER_XSS_BEACON_LOG` is not set, the agent falls back to likely paths such as `http_captured.txt`, `<run>/http_captured.txt`, and `<run>/logs/http_captured.txt`; do not rely on that fallback for experiments.
+- Before a new formal batch, the log may be archived or truncated to make manual inspection easier.
+
+Before starting a scan, verify the listener and log path:
+
+```bash
+curl "http://127.0.0.1:9091/?data=beacon_test_123"
+grep "beacon_test_123" "$SEMSCANNER_XSS_BEACON_LOG"
+```
+
+The `grep` command should print `beacon_test_123`. If it does not, fix the listener URL, port, or log path before running XSS experiments.
+
+### 5. Deploy the Packaged Applications
+
+The complete artifact attached to the GitHub Release includes the prebuilt
+target-image archive. Reset the four targets to their packaged baselines with:
+
+```bash
+./benchmark_apps/manage.sh reset all
+./benchmark_apps/manage.sh status all
+```
+
+A source-only Git checkout does not contain the packaged target images. Download
+the complete artifact from the corresponding GitHub Release before using these
+commands. Target URLs, credentials, individual reset commands, port overrides,
+and troubleshooting are documented in
+[`benchmark_apps/README.md`](benchmark_apps/README.md).
 
 ## Usage
 
@@ -151,3 +236,48 @@ Builds the **Web Application Semantic Graph (WASG)**: discovers pages via BFS wi
 | `config/llm_config.py` | Model names and temperature settings per agent |
 | `listen_server.py` | OOB beacon HTTP listener |
 | `utils/token_tracker.py` | LLM API token/cost tracking |
+
+## Prebuilt Docker Artifact
+
+The complete artifact is available from the repository's GitHub Release page.
+It includes a prebuilt `linux/amd64` SemScanner image under `ae/images/`, which
+contains the SemScanner source code, Python environment, Chromium,
+ChromeDriver, `sqlmap`, and the other runtime dependencies. A separate archive
+under `benchmark_apps/images/` contains four packaged applications: Loan
+Management, Online Food Ordering, Simple E-Learning, and changedetection.io
+0.45.20, including their initial application state.
+
+Docker Engine with the Compose v2 plugin is required. Load and check the
+SemScanner image with:
+
+```bash
+./ae.sh load
+./ae.sh doctor
+```
+
+Configure an OpenAI-compatible LLM API and run one of the packaged targets:
+
+```bash
+export LLM_API_KEY="<API-KEY>"
+export LLM_BASE_URL="<OPENAI-COMPATIBLE-ENDPOINT>"
+export LLM_MODEL="<MODEL-NAME>"
+
+./ae.sh run loan
+```
+
+For more stable end-to-end vulnerability discovery, we recommend a frontier
+model such as GPT-5.5 when it is available through the selected endpoint.
+
+The available target names are `loan`, `online-food`, `e-learning`, and
+`changedetection`. The
+selected application is restored to its packaged baseline before each run.
+Results are written to `ae_results/<TARGET>/<RUN-ID>/`; the principal files are
+`final_report.json`, `high_level_agent.log`,
+`attack_execution/attack_results.json`, and `token_usage.json`.
+
+After modifying the source code, rebuild and export the image with:
+
+```bash
+./ae.sh build
+./ae.sh export
+```

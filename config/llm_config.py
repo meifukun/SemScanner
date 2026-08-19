@@ -5,11 +5,13 @@ Configure the model names used by all agents here.
 Modify this file to change the model configuration across the entire framework.
 """
 
+import os
+
 # ========== Model Configuration ==========
 
 # Primary reasoning model (used for planning, attacks, etc.)
 # Change this to match the model name supported by your API provider.
-DEFAULT_MODEL = "deepseek-reasoner"
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "Qwen2.5-72B-Instruct-AWQ")
 
 # Optional: Configure different models for different scenarios below:
 
@@ -34,7 +36,10 @@ ATTACK_AGENT_MODEL = DEFAULT_MODEL
 # When an XSS payload fires, the browser sends a callback to this URL.
 # Since Selenium Chrome runs on the same host as the listener, 127.0.0.1 is sufficient.
 # Change the port if listen_server.py is configured differently.
-BEACON_URL = "http://127.0.0.1:9091/"
+BEACON_URL = os.environ.get(
+    "SEMSCANNER_XSS_BEACON_URL",
+    os.environ.get("BEACON_URL", "http://127.0.0.1:9091/")
+)
 
 # ========== Other Optional Configuration ==========
 

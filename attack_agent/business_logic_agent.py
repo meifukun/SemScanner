@@ -5,11 +5,15 @@ Business Logic Agent - ()
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import subprocess
+import os
 import json
 import re
+import shlex
 import time
 from config.llm_config import get_model_name, get_temperature
-from attack_agent.request_utils import extract_useful_response
+from attack_agent.request_utils import extract_useful_response, kill_process_group_and_collect
+
+_UNLIMITED_TIMEOUT_VALUES = {"none", "inf", "infinite", "unlimited"}
 
 class BusinessLogicAgent:
     """
@@ -30,6 +34,7 @@ class BusinessLogicAgent:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.log_dir / "business_logic_agent.log"
         self.reflection_enabled = reflection_enabled
+        self.deadline = None
 
         self._analysis_prompt = self._load_analysis_prompt()
         self._judgment_prompt = self._load_judgment_prompt()
@@ -41,12 +46,53 @@ class BusinessLogicAgent:
                 f.write(msg + "\n")
         except Exception:
             pass
+
+    def set_deadline(self, deadline):
+        self.deadline = deadline
+
+    def _deadline_exceeded(self) -> bool:
+        return self.deadline is not None and time.time() >= self.deadline
+
+    def _timeout_result(self, stage: int, commands_executed: int = 0,
+                        test_commands=None, test_results=None, extra=None) -> Dict[str, Any]:
+        result = {
+            "vulnerable": None,
+            "timeout": True,
+            "stage": stage,
+            "commands_executed": commands_executed,
+            "test_commands": test_commands or [],
+            "test_results": test_results or [],
+            "analysis": f"Business logic task timeout during stage {stage}",
+            "note": f"Business logic task timeout during stage {stage}",
+            "error": f"Business logic task timeout during stage {stage}",
+        }
+        if extra:
+            result.update(extra)
+        return result
     
     def _load_analysis_prompt(self) -> str:
         return Path("prompt/business_logic_attack.txt").read_text(encoding="utf-8")
     
     def _load_judgment_prompt(self) -> str:
         return Path("prompt/business_logic_judge.txt").read_text(encoding="utf-8")
+
+    def _get_curl_timeout(self):
+        raw = os.environ.get("SEMSCANNER_CURL_TIMEOUT", "120")
+        normalized = str(raw).strip().lower()
+        if normalized in _UNLIMITED_TIMEOUT_VALUES:
+            return None
+        try:
+            timeout = int(float(normalized))
+        except ValueError:
+            self._log(f"[BusinessLogic] Invalid SEMSCANNER_CURL_TIMEOUT={raw!r}; using 120s")
+            return 120
+        return timeout if timeout > 0 else 120
+
+    def _prepare_curl_args(self, curl_cmd: str):
+        args = shlex.split(curl_cmd)
+        if not args or args[0] != "curl":
+            raise ValueError("Business-logic test command must start with curl")
+        return args
     
 
     def _generate_test_commands(self, task_description: str,
@@ -175,16 +221,20 @@ class BusinessLogicAgent:
         Returns:
             {status: int, body: str, stderr: str}
         """
+        process = None
+        timeout = self._get_curl_timeout()
         try:
+            args = self._prepare_curl_args(curl_cmd)
             process = subprocess.Popen(
-                curl_cmd,
-                shell=True,
+                args,
+                shell=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                start_new_session=True,
             )
 
-            stdout, stderr = process.communicate(timeout=30)
+            stdout, stderr = process.communicate(timeout=timeout) if timeout is not None else process.communicate()
 
             from attack_agent.request_utils import parse_http_status_from_response
             http_status, response_body = parse_http_status_from_response(stdout)
@@ -197,12 +247,16 @@ class BusinessLogicAgent:
             }
 
         except subprocess.TimeoutExpired:
-            process.kill()
+            stdout, stderr, cleanup_complete = kill_process_group_and_collect(process)
+            cleanup_note = "process group killed"
+            if not cleanup_complete:
+                cleanup_note += "; pipe cleanup exceeded 3 seconds and was abandoned"
             return {
                 "status": 0,
-                "body": "",
-                "stderr": "",
-                "error": "Command timeout (30s exceeded)"
+                "body": stdout or "",
+                "stderr": (stderr or "") + f"\nCommand timeout after {timeout} seconds; {cleanup_note}",
+                "curl_exit_code": 124,
+                "error": f"Command timeout after {timeout} seconds"
             }
         except Exception as e:
             return {
@@ -355,6 +409,8 @@ class BusinessLogicAgent:
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1_single_point(task_description, target_request, credentials)
+        if result_stage1.get("timeout"):
+            return result_stage1
 
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
@@ -363,6 +419,16 @@ class BusinessLogicAgent:
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
+
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached before Stage 2; returning timeout result")
+            return self._timeout_result(
+                stage=2,
+                commands_executed=result_stage1.get("commands_executed", 0),
+                test_commands=result_stage1.get("test_commands", []),
+                test_results=result_stage1.get("test_results", []),
+                extra={"stage1_results": result_stage1}
+            )
 
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
@@ -407,11 +473,23 @@ class BusinessLogicAgent:
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}")
         self._log(f"")
 
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached before Stage 1 LLM analysis")
+            return self._timeout_result(stage=1)
+
         test_commands, llm_analysis = self._generate_test_commands(
             task_description,
             target_request,
             credentials
         )
+
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached after Stage 1 LLM analysis")
+            return self._timeout_result(
+                stage=1,
+                test_commands=test_commands,
+                extra={"llm_analysis": llm_analysis}
+            )
 
         if not test_commands:
             return {
@@ -431,6 +509,16 @@ class BusinessLogicAgent:
 
         execution_results = []
         for i, cmd in enumerate(test_commands, 1):
+            if self._deadline_exceeded():
+                self._log("[BusinessLogic] Deadline reached before next Stage 1 command")
+                return self._timeout_result(
+                    stage=1,
+                    commands_executed=len(execution_results),
+                    test_commands=test_commands,
+                    test_results=execution_results,
+                    extra={"llm_analysis": llm_analysis}
+                )
+
             self._log(f"[Executing Test {i}/{len(test_commands)}]:")
             self._log(f"  Base command: {cmd}")
 
@@ -460,6 +548,16 @@ class BusinessLogicAgent:
                 "status": result.get("status", 0),
                 "body": extracted_response
             })
+
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached before Stage 1 judgment")
+            return self._timeout_result(
+                stage=1,
+                commands_executed=len(execution_results),
+                test_commands=test_commands,
+                test_results=execution_results,
+                extra={"llm_analysis": llm_analysis}
+            )
 
         judgment = self._judge_vulnerability(
             task_description,
@@ -495,6 +593,16 @@ class BusinessLogicAgent:
 
         :({PAYLOAD})
         """
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached before Stage 2 reflection analysis")
+            return self._timeout_result(
+                stage=2,
+                commands_executed=stage1_context.get("commands_executed", 0),
+                test_commands=stage1_context.get("test_commands", []),
+                test_results=stage1_context.get("test_results", []),
+                extra={"stage1_results": stage1_context}
+            )
+
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix_single_point(stage1_context)
 
@@ -505,6 +613,18 @@ class BusinessLogicAgent:
             credentials=credentials,
             reflection_suffix=reflection_suffix
         )
+
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached after Stage 2 LLM analysis")
+            return self._timeout_result(
+                stage=2,
+                test_commands=new_commands,
+                extra={
+                    "llm_reflection_output": llm_reflection_output,
+                    "reflection_analysis": reflection_suffix,
+                    "stage1_results": stage1_context
+                }
+            )
 
         if not new_commands:
             self._log(f"[Reflection] LLM did not generate new commands, returning Stage 1 result")
@@ -521,6 +641,20 @@ class BusinessLogicAgent:
         execution_results = []
 
         for i, cmd in enumerate(new_commands, 1):
+            if self._deadline_exceeded():
+                self._log("[BusinessLogic] Deadline reached before next Stage 2 command")
+                return self._timeout_result(
+                    stage=2,
+                    commands_executed=len(execution_results),
+                    test_commands=new_commands,
+                    test_results=execution_results,
+                    extra={
+                        "llm_reflection_output": llm_reflection_output,
+                        "reflection_analysis": reflection_suffix,
+                        "stage1_results": stage1_context
+                    }
+                )
+
             self._log(f"[Executing Test {i}/{len(new_commands)}]:")
             self._log(f"  Base command: {cmd}")
 
@@ -550,6 +684,20 @@ class BusinessLogicAgent:
                 "status": result.get("status", 0),
                 "body": extracted_response
             })
+
+        if self._deadline_exceeded():
+            self._log("[BusinessLogic] Deadline reached before Stage 2 judgment")
+            return self._timeout_result(
+                stage=2,
+                commands_executed=len(execution_results),
+                test_commands=new_commands,
+                test_results=execution_results,
+                extra={
+                    "llm_reflection_output": llm_reflection_output,
+                    "reflection_analysis": reflection_suffix,
+                    "stage1_results": stage1_context
+                }
+            )
 
         judgment = self._judge_vulnerability(
             task_description,

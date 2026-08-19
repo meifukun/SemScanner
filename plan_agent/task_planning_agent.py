@@ -347,6 +347,20 @@ class TaskPlanningAgent:
             self._log(f"[TaskPlanningAgent] Skipping execution (empty page_url)")
             return
 
+        if not self.crawler.is_url_in_scope(action.page_url):
+            self._log(
+                f"[ScopeGuard] Refusing task page outside target origin: "
+                f"{action.page_url}"
+            )
+            return
+
+        if not self.store.has_page(action.page_url):
+            self._log(
+                f"[TaskPlanningAgent] Page is not present in the semantic graph, "
+                f"skipping: {action.page_url}"
+            )
+            return
+
         # If task list is empty, also mark page as executed (avoid infinite loop)
         if not action.tasks:
             self._log(f"[TaskPlanningAgent] No tasks to execute, but marking page as executed")
@@ -403,10 +417,24 @@ class TaskPlanningAgent:
 
         for page_url in action.page_urls:
             self._log(f"[TaskPlanningAgent] Updating page: {page_url}")
+
+            if not self.crawler.is_url_in_scope(page_url):
+                self._log(f"[ScopeGuard] Refusing page update outside target origin: {page_url}")
+                continue
+            if not self.store.has_page(page_url):
+                self._log(f"[TaskPlanningAgent] Page is not present in the graph: {page_url}")
+                continue
             
             # Navigate to the page
             self.crawler.driver.get(page_url)
             time.sleep(0.6)
+            if not self.crawler.is_url_in_scope(self.crawler.driver.current_url):
+                self._log(
+                    f"[ScopeGuard] Page update left target origin: "
+                    f"{page_url} -> {self.crawler.driver.current_url}"
+                )
+                self.crawler.driver.get(self.crawler.initial_url)
+                continue
             
             # Recollect page information
             self.crawler._collect_page_info(page_url)
@@ -429,7 +457,57 @@ class TaskPlanningAgent:
             self.state.updated_pages.add(page_url)
             # After page update, tasks need to be re-executed
             self.state.executed_pages.discard(page_url)
-    
+
+    def _plan_next_action(self):
+        """
+        Plan the next action for one scheduler iteration.
+
+        This method is used by the parallel scheduler. The implementation
+        mirrors the previously working code in /data/users/meifukun/Web-Agent/Web-Agent.
+        """
+        graph_with_status = self._build_graph_with_execution_status()
+
+        if self._check_all_pages_executed(graph_with_status):
+            self._log("[TaskPlanningAgent] All pages executed, returning FINISH directly")
+            return ("FINISH", None)
+
+        action_history_str = self._format_action_history()
+        graph_json = json.dumps(graph_with_status, indent=2, ensure_ascii=False)
+        prompt = self.prompt_template.format(
+            graph_json=graph_json,
+            executed_pages=list(self.state.executed_pages),
+            updated_pages=list(self.state.updated_pages),
+            total_tasks_executed=self.state.total_tasks_executed,
+            action_history=action_history_str
+        )
+
+        self._log("\n" + "="*60)
+        self._log("[Current Graph State]")
+        self._log(graph_json)
+        self._log("="*60 + "\n")
+
+        self._log("[TaskPlanningAgent] Consulting LLM for next action...")
+        llm_response = self._call_llm(prompt)
+
+        self._log("\n[LLM Response]:")
+        self._log(llm_response)
+        self._log("\n" + "="*60)
+
+        if not llm_response:
+            self._log("[TaskPlanningAgent] Empty LLM response, returning FINISH")
+            return ("FINISH", None)
+
+        action_type, action_data = self._parse_llm_response(llm_response)
+
+        if action_type == ActionType.EXECUTE_TASKS:
+            return ("EXECUTE_TASKS", action_data)
+        elif action_type == ActionType.UPDATE_PAGES:
+            return ("UPDATE_PAGES", action_data)
+        elif action_type == ActionType.FINISH:
+            return ("FINISH", None)
+        else:
+            return ("FINISH", None)
+
     def plan_and_execute(self, max_iterations: int = 1000):
         """
         Main planning and execution loop

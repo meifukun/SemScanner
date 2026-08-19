@@ -6,6 +6,7 @@ Top-level decision agent for autonomous security testing
 import json
 import time
 import re
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -13,8 +14,9 @@ from datetime import datetime
 from seleniumwire import webdriver
 from selenium.webdriver.remote.webdriver import WebDriver
 
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from utils.chrome_driver import configure_chrome_options, make_chrome_service
+from utils.url_scope import UrlScope
+from config.llm_config import BEACON_URL
 
 from crawl.crawler import Crawler
 from task.tasks import Task
@@ -24,6 +26,17 @@ from plan_agent.attack_planning_agent import AttackPlanningAgent
 from attack_agent.attack_executor import AttackExecutor
 from utils.token_tracker import tracker
 # No longer import specific agent classes (now created on-demand in AttackExecutor)
+
+
+def _read_attack_execution_max_workers() -> int:
+    """Read attack worker count, keeping ATTACK_WORKERS as a legacy alias."""
+    value = os.environ.get("SEMSCANNER_ATTACK_MAX_WORKERS")
+    if value is None:
+        value = os.environ.get("ATTACK_WORKERS")
+    if value is None:
+        value = "1"
+    return max(1, int(value))
+
 
 # Monkey patch to modify the original get method, avoiding old timeout errors that terminate the program
 # Save the original get method
@@ -38,7 +51,10 @@ def silent_get(self, url, modify=False):
         time.sleep(2)
         return True
     except Exception as e:  # Catch exception object e
-        print(f"Silent failure for {url}, exception: {e}")  # Print exception info
+        display_url = str(url)
+        if len(display_url) > 300:
+            display_url = f"{display_url[:300]}... [truncated {len(str(url)) - 300} chars]"
+        print(f"Silent failure for {display_url}, exception: {e}")  # Print exception info
         return False
 
 # Replace the default get method
@@ -90,8 +106,8 @@ class HighLevelDecisionAgent:
                 - crawl_max_llm_workers: Maximum concurrent LLM workers during crawling (default 20)
                 - task_planning_max_iterations: Maximum task planning iterations (default 200, previously 100)
                 - task_planning_max_workers: Number of parallel workers for task execution (default 5)
-                - attack_planning_max_iterations: Maximum attack planning iterations (default 100)
-                - attack_execution_max_workers: Number of parallel workers for attack execution (default 10)
+                - attack_planning_max_iterations: Maximum attack planning iterations (default 80)
+                - attack_execution_max_workers: Number of parallel workers for attack execution (default 1)
         """
         self.client = client
         self.initial_url = initial_url
@@ -109,6 +125,15 @@ class HighLevelDecisionAgent:
             self.target_domain = parsed.hostname  # Extract domain (without port)
             print(f"[DecisionAgent] Auto-extracted target domain from initial_url: {self.target_domain}")
 
+        # Keep target_domain for cookie/session compatibility, but enforce
+        # navigation with an exact parsed origin.  The local beacon is a
+        # request-only exception and can never become a crawl/task URL.
+        self.url_scope = UrlScope(initial_url, request_exception_urls=(BEACON_URL,))
+        if crawl_start_url and not self.url_scope.allows_navigation(crawl_start_url):
+            raise ValueError(
+                f"crawl_start_url is outside the target origin: {crawl_start_url!r}"
+            )
+
         self.config = {
             # Phase 2: Crawling
             "crawl_max_pages": 100,
@@ -120,10 +145,10 @@ class HighLevelDecisionAgent:
             "task_planning_max_workers": 10,
 
             # Phase 4: Attack Planning
-            "attack_planning_max_iterations": 100,
+            "attack_planning_max_iterations": 80,
 
             # Phase 5: Attack Execution
-            "attack_execution_max_workers": 10,
+            "attack_execution_max_workers": _read_attack_execution_max_workers(),
         }
 
         # Override with user-provided configuration
@@ -224,6 +249,7 @@ class HighLevelDecisionAgent:
                 client=self.client,
                 initial_url=self.initial_url,
                 target_domain=self.target_domain, # Pass parameter
+                url_scope=self.url_scope,
                 store_root=str(self.dirs["crawl"])
             )
 
@@ -275,13 +301,18 @@ class HighLevelDecisionAgent:
 
         if not self.chrome_options:
             chrome_options = webdriver.ChromeOptions()
-            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--disable-web-security")
             chrome_options.add_argument("--allow-running-insecure-content")
             chrome_options.add_argument("--disable-xss-auditor")
+            chrome_options.page_load_strategy = "eager"
             self.chrome_options = chrome_options
 
-        service = Service(ChromeDriverManager().install())
+        self.chrome_options = configure_chrome_options(self.chrome_options)
+        service = make_chrome_service()
         self.driver = webdriver.Chrome(service=service, options=self.chrome_options)
 
         self.driver.set_page_load_timeout(60)
@@ -290,15 +321,12 @@ class HighLevelDecisionAgent:
 
         # Intercept external requests
         def interceptor(request):
-            request_url = request.url
-            # if '127.0.0.1' not in request_url and 'localhost' not in request_url:
-            if self.target_domain not in request_url:
+            if not self.url_scope.allows_request(request.url):
                 request.abort()
 
         self.driver.request_interceptor = interceptor
 
         # Inject XSS detection script with beacon URL
-        from config.llm_config import BEACON_URL
         xss_script = open("js/xss_xhr.js", "r").read().replace("{BEACON_URL}", BEACON_URL.rstrip("/"))
         self.driver.add_script(xss_script)
 
@@ -575,7 +603,7 @@ class HighLevelDecisionAgent:
         self._log("="*70)
         self._log("Mode: Phase 4 (Planning) and Phase 5 (Execution) run in parallel")
         self._log("  - Planning thread: Continuously generates tasks and puts them into a queue")
-        self._log("  - Execution thread pool: 10 workers concurrently execute tasks")
+        self._log(f"  - Execution thread pool: {self.config['attack_execution_max_workers']} workers concurrently execute tasks")
         self._log("="*70 + "\n")
 
         # Create task queue
@@ -583,6 +611,7 @@ class HighLevelDecisionAgent:
         import threading
 
         task_queue = queue.Queue(maxsize=100)  # Limit queue size to avoid memory overflow
+        planning_done_event = threading.Event()
 
         # Create AttackPlanningAgent
         self.attack_planner = AttackPlanningAgent(
@@ -606,8 +635,14 @@ class HighLevelDecisionAgent:
                 import traceback
                 self._log(traceback.format_exc())
                 # Send termination signal (notify executor even on failure)
-                task_queue.put(None)
+                try:
+                    task_queue.put(None, timeout=30)
+                except Exception as signal_error:
+                    self._log(f"[Phase 4 Thread] Failed to send termination signal: {signal_error}")
                 return None
+            finally:
+                planning_done_event.set()
+                self._log("[Phase 4 Thread] Planning done event set")
 
         planning_thread = threading.Thread(target=planning_worker, daemon=False)
         planning_thread.start()
@@ -637,7 +672,8 @@ class HighLevelDecisionAgent:
         try:
             execution_results = self.executor.execute_tasks_from_queue(
                 task_queue,
-                max_workers=self.config["attack_execution_max_workers"]
+                max_workers=self.config["attack_execution_max_workers"],
+                planning_done_event=planning_done_event
             )
         except KeyboardInterrupt:
             self._log("\n Phase 4+5 interrupted by user (Ctrl+C)")
@@ -648,13 +684,11 @@ class HighLevelDecisionAgent:
             self.phase_times["phase_4_5_attack"] = attack_duration
             self._log(f"\n Attack planning+execution duration: {attack_duration:.1f}s")
 
-        # Wait for planning thread to complete
+        # Wait for planning thread to complete. There is no overall run-time
+        # limit here; page/task bounds control scan size instead.
         self._log("\n[Main Thread] Waiting for planning thread to finish...")
-        planning_thread.join(timeout=300)  # Wait up to 5 minutes
-        if planning_thread.is_alive():
-            self._log("[Main Thread] Warning: Planning thread still running after 5 minutes")
-        else:
-            self._log("[Main Thread] Planning thread finished")
+        planning_thread.join()
+        self._log("[Main Thread] Planning thread finished")
 
         # Count vulnerabilities
         vulnerabilities = sum(

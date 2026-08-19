@@ -295,6 +295,14 @@ class ParallelTaskScheduler:
             print(f"[PlanningThread] Empty page_url, skipping")
             return
 
+        if not self.crawler.is_url_in_scope(page_url):
+            print(f"[ScopeGuard] Refusing task page outside target origin: {page_url}")
+            return
+
+        if not self.crawler.store.has_page(page_url):
+            print(f"[PlanningThread] Page is not present in the semantic graph, skipping: {page_url}")
+            return
+
         # Fix: Even if task list is empty, mark page as executed (avoid infinite loop)
         if not tasks:
             print(f"[PlanningThread] No tasks to execute for {page_url}, but marking as executed")
@@ -354,7 +362,10 @@ class ParallelTaskScheduler:
         Args:
             action_data: UpdatePagesAction object
         """
-        page_urls = action_data.page_urls
+        page_urls = [
+            url for url in action_data.page_urls
+            if self.crawler.is_url_in_scope(url) and self.crawler.store.has_page(url)
+        ]
         reason = action_data.reason
 
         print(f"\n[PlanningThread] *** UPDATE_PAGES synchronization point ***")
@@ -400,9 +411,19 @@ class ParallelTaskScheduler:
             print(f"[UpdatePages] [{i}/{len(page_urls)}] Updating page: {url}")
 
             try:
+                if not self.crawler.is_url_in_scope(url):
+                    print(f"[ScopeGuard] Refusing page update outside target origin: {url}")
+                    continue
                 # 1. Navigate to the page
                 driver.get(url)
                 time.sleep(0.6)
+                if not self.crawler.is_url_in_scope(driver.current_url):
+                    print(
+                        f"[ScopeGuard] Page update left target origin: "
+                        f"{url} -> {driver.current_url}"
+                    )
+                    driver.get(self.crawler.initial_url)
+                    continue
 
                 # 2. Recollect page information (consistent with serial mode)
                 self.crawler._collect_page_info(url)

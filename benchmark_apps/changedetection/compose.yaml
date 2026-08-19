@@ -1,0 +1,20 @@
+services:
+  web:
+    image: semscanner-ae-changedetection:0.45.20
+    environment:
+      # PBKDF2-SHA256 hash for the fixed evaluation password: admin123.
+      SALTED_PASS: "D4pDUm+mqYWZMNAbGI1fRt0t4a7Wcc9IsuxgJvONEPrxTBC9/RFwhD7JKbKo7AzR0/rYJTdLlc1vhO6ZnrKoug=="
+      DEFAULT_SETTINGS_REQUESTS_WORKERS: "1"
+    ports:
+      - "127.0.0.1:${CHANGEDETECTION_PORT:-4328}:5000"
+    volumes:
+      - changedetection-config:/config
+
+volumes:
+  changedetection-config:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.203.0.0/24

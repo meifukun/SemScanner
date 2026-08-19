@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Iterable, Optional, Set
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from utils.chrome_driver import configure_chrome_options, make_chrome_service
 import time
 
 try:
@@ -77,6 +76,35 @@ def extract_main_text(html_str: str, driver=None) -> str:
     if driver:
         try:
             visible_text = driver.execute_script("""
+                function shouldSkipElement(el) {
+                    if (!el || !el.tagName) return false;
+
+                    const tagName = el.tagName.toLowerCase();
+                    if (['script', 'style', 'noscript', 'template', 'header', 'footer', 'nav'].includes(tagName)) {
+                        return true;
+                    }
+
+                    const blockedTokens = new Set([
+                        'nav', 'navbar', 'sidebar', 'breadcrumb', 'breadcrumbs',
+                        'login', 'subscribe', 'ads', 'ad'
+                    ]);
+
+                    const className = typeof el.className === 'string' ? el.className : '';
+                    const idName = typeof el.id === 'string' ? el.id : '';
+                    const tokens = (className + ' ' + idName)
+                        .toLowerCase()
+                        .split(/\\s+/)
+                        .filter(Boolean);
+
+                    return tokens.some(token => blockedTokens.has(token));
+                }
+
+                function contentRoot() {
+                    return document.querySelector('main#view-panel') ||
+                           document.querySelector('main, [role="main"], #content, .content') ||
+                           document.body;
+                }
+
                 // Recursively get visible element text
                 function getVisibleText(el) {
                     if (!el) return '';
@@ -89,16 +117,7 @@ def extract_main_text(html_str: str, driver=None) -> str:
                         return '';
                     }
                     
-                    // Exclude script/style/noscript
-                    const tagName = el.tagName ? el.tagName.toLowerCase() : '';
-                    if (['script', 'style', 'noscript', 'template'].includes(tagName)) {
-                        return '';
-                    }
-                    
-                    // Exclude common non-content areas
-                    const className = el.className || '';
-                    const classStr = typeof className === 'string' ? className : '';
-                    if (/header|footer|nav|ads|ad-|sidebar|breadcrumb|login|subscribe/i.test(classStr)) {
+                    if (shouldSkipElement(el)) {
                         return '';
                     }
                     
@@ -115,7 +134,7 @@ def extract_main_text(html_str: str, driver=None) -> str:
                     return text;
                 }
                 
-                return getVisibleText(document.body);
+                return getVisibleText(contentRoot());
             """)
             
             if visible_text and visible_text.strip():
@@ -205,6 +224,35 @@ def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
         try:
             print("    [Using driver to extract visible DOM structure]")
             visible_tags = driver.execute_script("""
+                function shouldSkipElement(el) {
+                    if (!el || !el.tagName) return false;
+
+                    const tagName = el.tagName.toLowerCase();
+                    if (['script', 'style', 'noscript', 'template', 'header', 'footer', 'nav'].includes(tagName)) {
+                        return true;
+                    }
+
+                    const blockedTokens = new Set([
+                        'nav', 'navbar', 'sidebar', 'breadcrumb', 'breadcrumbs',
+                        'login', 'subscribe', 'ads', 'ad'
+                    ]);
+
+                    const className = typeof el.className === 'string' ? el.className : '';
+                    const idName = typeof el.id === 'string' ? el.id : '';
+                    const tokens = (className + ' ' + idName)
+                        .toLowerCase()
+                        .split(/\\s+/)
+                        .filter(Boolean);
+
+                    return tokens.some(token => blockedTokens.has(token));
+                }
+
+                function contentRoot() {
+                    return document.querySelector('main#view-panel') ||
+                           document.querySelector('main, [role="main"], #content, .content') ||
+                           document.body;
+                }
+
                 // Recursively traverse visible elements, collect tag sequence
                 function getVisibleDOMSequence(el, sequence) {
                     if (!el || !el.tagName) return;
@@ -219,15 +267,7 @@ def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
                     
                     const tagName = el.tagName.toLowerCase();
                     
-                    // Exclude script/style/noscript
-                    if (['script', 'style', 'noscript', 'template'].includes(tagName)) {
-                        return;
-                    }
-                    
-                    // Exclude common non-content areas
-                    const className = el.className || '';
-                    const classStr = typeof className === 'string' ? className : '';
-                    if (/header|footer|nav|ads|ad-|sidebar|breadcrumb|login|subscribe/i.test(classStr)) {
+                    if (shouldSkipElement(el)) {
                         return;
                     }
                     
@@ -247,7 +287,7 @@ def dom_tag_sequence(html_str: str, driver=None) -> List[str]:
                 }
                 
                 const sequence = [];
-                getVisibleDOMSequence(document.body, sequence);
+                getVisibleDOMSequence(contentRoot(), sequence);
                 return sequence;
             """)
             
@@ -485,12 +525,17 @@ def main():
     # Initialize driver
     print("\n[1] Initializing Chrome driver...")
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument("--headless")  # Uncomment for headless mode
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument("--allow-running-insecure-content")
     chrome_options.add_argument("--disable-xss-auditor")
+    chrome_options.page_load_strategy = "eager"
 
-    service = Service(ChromeDriverManager().install())
+    chrome_options = configure_chrome_options(chrome_options)
+    service = make_chrome_service()
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.set_page_load_timeout(60)
     driver.set_window_size(1920, 1080)

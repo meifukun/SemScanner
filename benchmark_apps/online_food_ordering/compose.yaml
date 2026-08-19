@@ -1,0 +1,5 @@
+services:
+  web:
+    image: semscanner-ae-online-food-ordering:1.0
+    ports:
+      - "127.0.0.1:${FOOD_PORT:-8099}:80"

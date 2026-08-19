@@ -183,8 +183,8 @@ REF_ID: req_a1b2c3d4
 REF_ID: req_e5f6g7h8
 
 Reasoning:
-For request req_a1b2c3d4 (GET /api/users?id=123):
-The request contains a parameter 'id'. We must generate tasks for ALL vulnerability types.
+For request req_a1b2c3d4 (GET /admin/category.php?id=4):
+The request contains a query parameter 'id' that selects a resource. Even though this looks like an object reference for access control, it is still an explicit query parameter, so we must generate tasks for ALL vulnerability types (including SQL_INJECTION), not only BUSINESS_LOGIC.
 
 For request req_e5f6g7h8 (POST /api/admin/report):
 The body parameters 'template', 'format', 'source_url' are user-controllable. We must generate tasks for ALL vulnerability types.

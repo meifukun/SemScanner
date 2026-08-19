@@ -79,6 +79,7 @@ curl -i -X GET 'http://example.com/api/basket/0'
 4. **Use realistic but rule-violating values**
 5. **Each test should have ONE specific hypothesis**
 6. **Generate only curl commands** - one command per line
+7. **Do not test SQL injection or XSS here**: do not generate SQL payloads, script tags, event-handler payloads, alert/xss calls, or other non-business-logic exploit payloads.
 
 Now analyze this task:
 

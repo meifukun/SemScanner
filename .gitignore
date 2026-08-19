@@ -1,0 +1,38 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local environments and credentials
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Runtime output
+ae_results/
+ae_runtime/
+output/
+outputs/
+results/
+logs/
+*.log
+
+# Pre-built images are distributed as GitHub Release assets
+ae/images/*
+!ae/images/.gitignore
+benchmark_apps/images/*
+!benchmark_apps/images/.gitignore
+
+# Editor and operating-system metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

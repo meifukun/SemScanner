@@ -30,10 +30,12 @@ Pricing note:
 """
 
 import threading
+import os
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, Optional
+from types import SimpleNamespace
 import json
 
 # ========== Global context variable (thread-isolated, inherits parent context) ==========
@@ -290,20 +292,102 @@ tracker = TokenTracker()
 
 # ========== TrackedClient Wrapper ==========
 
-class _TrackedCompletions:
-    """Wraps chat.completions, intercepts create() calls, and automatically records token usage"""
+# ----- Responses-API adaptation -----
+# Some OpenAI-compatible gateways (e.g. sec.llm.autos) only expose /v1/responses
+# for frontier reasoning models (gpt-5.x) and return 500 on /v1/chat/completions.
+# When LLM_WIRE_API=responses (or the model name implies it, e.g. gpt-5*), route
+# chat.completions.create() through client.responses.create() and map the result
+# back onto a chat-completion-shaped object so the rest of the pipeline is unchanged.
 
-    def __init__(self, completions, tracker_instance: TokenTracker):
+def _use_responses_api(model) -> bool:
+    mode = os.environ.get("LLM_WIRE_API", "").strip().lower()
+    if mode == "responses":
+        return True
+    if mode == "chat":
+        return False
+    return bool(model) and str(model).lower().startswith("gpt-5")
+
+
+def _responses_to_chat(resp, model):
+    """Map a Responses API response onto a chat-completion-like object."""
+    content_parts, reasoning_parts = [], []
+    for item in (getattr(resp, "output", None) or []):
+        icont = getattr(item, "content", None)
+        if getattr(item, "type", None) == "message" and icont:
+            for c in icont:
+                t = getattr(c, "text", None)
+                if t:
+                    content_parts.append(t)
+        elif getattr(item, "type", None) == "reasoning" and icont:
+            for c in icont:
+                t = getattr(c, "text", None)
+                if t:
+                    reasoning_parts.append(t)
+    msg = SimpleNamespace(
+        role="assistant",
+        content="".join(content_parts),
+        reasoning_content=("".join(reasoning_parts) or None),
+    )
+    choice = SimpleNamespace(index=0, message=msg, finish_reason="stop")
+    u = getattr(resp, "usage", None)
+    usage = None
+    if u:
+        in_tok = getattr(u, "input_tokens", None) or getattr(u, "prompt_tokens", 0) or 0
+        out_tok = getattr(u, "output_tokens", None) or getattr(u, "completion_tokens", 0) or 0
+        rsns = None
+        od = getattr(u, "output_tokens_details", None)
+        if od is not None:
+            rsns = getattr(od, "reasoning_tokens", None)
+        usage = SimpleNamespace(
+            prompt_tokens=in_tok,
+            completion_tokens=out_tok,
+            total_tokens=getattr(u, "total_tokens", 0) or (in_tok + out_tok),
+            reasoning_tokens=rsns,
+        )
+    return SimpleNamespace(
+        id=getattr(resp, "id", ""),
+        model=getattr(resp, "model", model),
+        choices=[choice],
+        usage=usage,
+    )
+
+
+class _TrackedCompletions:
+    """Wraps chat.completions, intercepts create() calls, and automatically records token usage.
+
+    When the active model uses the Responses API (see _use_responses_api), create()
+    is routed through client.responses.create() instead of chat.completions.create().
+    """
+
+    def __init__(self, completions, tracker_instance: TokenTracker, client=None):
         self._completions = completions
         self._tracker = tracker_instance
+        self._client = client
 
     def create(self, *args, **kwargs):
-        response = self._completions.create(*args, **kwargs)
+        model = kwargs.get("model") or (args[0] if args else None)
+        if self._client is not None and _use_responses_api(model):
+            response = self._responses_create(**kwargs)
+        else:
+            response = self._completions.create(*args, **kwargs)
         usage = getattr(response, "usage", None)
         if usage:
-            model = kwargs.get("model") or (args[0] if args else None)
             self._tracker.record_usage(usage, model=model)
         return response
+
+    def _responses_create(self, **kwargs):
+        rkwargs = {"model": kwargs.get("model"), "input": kwargs.get("messages"), "store": False}
+        if kwargs.get("max_tokens") is not None:
+            rkwargs["max_output_tokens"] = kwargs["max_tokens"]
+        if kwargs.get("temperature") is not None:
+            rkwargs["temperature"] = kwargs["temperature"]
+        if kwargs.get("top_p") is not None:
+            rkwargs["top_p"] = kwargs["top_p"]
+        rf = kwargs.get("response_format")
+        if isinstance(rf, dict) and rf.get("type") == "json_object":
+            rkwargs["text"] = {"format": {"type": "json_object"}}
+        resp = self._client.responses.create(**rkwargs)
+        return _responses_to_chat(resp, kwargs.get("model"))
 
     def __getattr__(self, name):
         return getattr(self._completions, name)
@@ -312,9 +396,9 @@ class _TrackedCompletions:
 class _TrackedChat:
     """Wraps chat, replacing completions with the tracked version"""
 
-    def __init__(self, chat, tracker_instance: TokenTracker):
+    def __init__(self, chat, tracker_instance: TokenTracker, client=None):
         self._chat = chat
-        self.completions = _TrackedCompletions(chat.completions, tracker_instance)
+        self.completions = _TrackedCompletions(chat.completions, tracker_instance, client=client)
 
     def __getattr__(self, name):
         return getattr(self._chat, name)
@@ -331,7 +415,7 @@ class TrackedClient:
 
     def __init__(self, client, tracker_instance: TokenTracker):
         self._client = client
-        self.chat = _TrackedChat(client.chat, tracker_instance)
+        self.chat = _TrackedChat(client.chat, tracker_instance, client=client)
 
     def __getattr__(self, name):
         return getattr(self._client, name)

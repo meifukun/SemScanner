@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Union
+from typing import Iterable, Optional, Union
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -344,4 +344,3 @@ class Actuators:
         except (StaleElementReferenceException, ElementNotInteractableException, WebDriverException) as e:
             print(f"[Actuators] Click failed: {e}")
             return False
-

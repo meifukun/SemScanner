@@ -17,6 +17,7 @@ from capture.network_capture import NetworkCapture
 from crawl.tracer import ExecutionTracer
 from app_info.models import PageInfo, NetworkRequest, Edge
 from task.tasks import Task
+from utils.url_scope import UrlScope
 
 
 class IndependentTaskExecutor:
@@ -49,6 +50,7 @@ class IndependentTaskExecutor:
         self.shared_store = shared_store
         self.client = client
         self.base_url = base_url
+        self.url_scope = UrlScope(base_url)
         self.task_gen = task_gen
         self.content_index = content_index  # Page dedup index
 
@@ -80,6 +82,11 @@ class IndependentTaskExecutor:
         print(f"  Description: {task.description}")
         print(f"  URL: {task.initial_url}")
 
+        if not self.url_scope.allows_navigation(task.initial_url):
+            message = f"[ScopeGuard] Refusing task outside target origin: {task.initial_url}"
+            print(message)
+            return {"task_id": task.task_id, "status": "error", "error": message}
+
         try:
             # ===== Step 1: Create independent component chain =====
             sensors = DOMSemanticExtractor(driver, use_improved_locator=True)
@@ -87,7 +94,8 @@ class IndependentTaskExecutor:
             bridge = InteractionExecutionAgent(
                 sensors=sensors,
                 actuators=actuators,
-                client=self.client
+                client=self.client,
+                url_in_scope=self.url_scope.allows_navigation,
             )
             network_capture = NetworkCapture(driver)
 
@@ -102,6 +110,7 @@ class IndependentTaskExecutor:
                 network_capture=network_capture,
                 on_new_page=self._on_new_page_discovered_parallel,  # Lightweight callback
                 construct_edge=self._construct_edge_parallel,       # Lightweight callback
+                url_in_scope=self.url_scope.allows_navigation,
                 debug=False
             )
 
@@ -114,6 +123,11 @@ class IndependentTaskExecutor:
             # ===== Step 3: Load page abstract (from cache) =====
             driver.get(task.initial_url)
             time.sleep(0.6)
+            if not self.url_scope.allows_navigation(driver.current_url):
+                raise ValueError(
+                    f"[ScopeGuard] Task navigation left target origin: "
+                    f"{task.initial_url} -> {driver.current_url}"
+                )
 
             # Create screenshot directory with driver info identifier
             photo_dir = self.shared_store.traces_dir / f"{driver_info}_{task.task_id}"
@@ -201,6 +215,10 @@ class IndependentTaskExecutor:
         Cache page info (thread-safe)
         Generate tasks (consistent with serial mode)
         """
+        if not self.url_scope.allows_navigation(url):
+            print(f"[ScopeGuard] Ignoring page outside target origin: {url}")
+            return
+
         # Check if already processed (avoid duplication)
         if self.shared_store.has_page(url):
             return
@@ -260,8 +278,9 @@ class IndependentTaskExecutor:
                 elements = driver.find_elements(By.TAG_NAME, 'a')
                 for elem in elements:
                     href = elem.get_attribute('href')
-                    if href and '127.0.0.1' in href:
-                        outgoing_links.append(href.strip())
+                    resolved = self.url_scope.resolve(href, current_url=url) if href else None
+                    if resolved and self.url_scope.allows_navigation(resolved):
+                        outgoing_links.append(resolved)
                 outgoing_links = list(set(outgoing_links))  # Deduplicate
             except Exception as e:
                 print(f"[ParallelNewPage] Link collection failed: {e}")
@@ -308,6 +327,9 @@ class IndependentTaskExecutor:
         Retained: collect links and create "discovered" edges
         """
         try:
+            if not self.url_scope.allows_navigation(url):
+                print(f"[ScopeGuard] Skipping edge construction outside target origin: {url}")
+                return
             driver = self._current_driver
             if not driver:
                 return
@@ -318,8 +340,9 @@ class IndependentTaskExecutor:
                 elements = driver.find_elements(By.TAG_NAME, 'a')
                 for elem in elements:
                     href = elem.get_attribute('href')
-                    if href and '127.0.0.1' in href:
-                        links.append(href.strip())
+                    resolved = self.url_scope.resolve(href, current_url=url) if href else None
+                    if resolved and self.url_scope.allows_navigation(resolved):
+                        links.append(resolved)
             except:
                 pass
 

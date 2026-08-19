@@ -8,8 +8,9 @@ import time
 import json
 from typing import Dict, List, Optional
 from seleniumwire import webdriver  # Use selenium-wire to support network request capture
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from utils.chrome_driver import configure_chrome_options, make_chrome_service
+from utils.url_scope import UrlScope
+from config.llm_config import BEACON_URL
 
 
 class ParallelDriverManager:
@@ -37,6 +38,7 @@ class ParallelDriverManager:
             parsed = urlparse(base_url)
             self.target_domain = parsed.hostname
             print(f"[ParallelDriverManager] Auto-extracted target domain from base_url: {self.target_domain}")
+        self.url_scope = UrlScope(base_url, request_exception_urls=(BEACON_URL,))
 
         print(f"[ParallelDriverManager] Initialization complete, base URL: {base_url}")
 
@@ -76,10 +78,10 @@ class ParallelDriverManager:
         print(f"  - SessionStorage: {len(credentials.get('sessionStorage', {}))} items")
 
         # ===== Step 2: Create new driver (same configuration as main driver) =====
-        chrome_options = self._create_chrome_options()
+        chrome_options = configure_chrome_options(self._create_chrome_options())
 
         print(f"[CloneDriver] Starting Chrome browser...")
-        service = Service(ChromeDriverManager().install())
+        service = make_chrome_service()
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         driver.set_page_load_timeout(60)
@@ -88,16 +90,13 @@ class ParallelDriverManager:
 
         # Configure request interceptor (consistent with main driver)
         def interceptor(request):
-            request_url = request.url
-            # if '127.0.0.1' not in request_url and 'localhost' not in request_url:
-            if self.target_domain not in request_url:
+            if not self.url_scope.allows_request(request.url):
                 request.abort()
 
         driver.request_interceptor = interceptor
 
         # Inject XSS detection script with beacon URL (consistent with main driver)
         try:
-            from config.llm_config import BEACON_URL
             xss_script_path = "js/xss_xhr.js"
             if os.path.exists(xss_script_path):
                 with open(xss_script_path, "r") as f:
@@ -296,10 +295,14 @@ class ParallelDriverManager:
         else:
             # Create default configuration
             chrome_options = webdriver.ChromeOptions()
-            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--disable-web-security")
             chrome_options.add_argument("--allow-running-insecure-content")
             chrome_options.add_argument("--disable-xss-auditor")
+            chrome_options.page_load_strategy = "eager"
 
         # Key: Each driver uses an independent temp directory to avoid conflicts
         # Chrome does not allow multiple processes to share the same profile

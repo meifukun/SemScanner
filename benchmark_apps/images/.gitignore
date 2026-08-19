@@ -1,0 +1,5 @@
+*.tar
+*.tar.gz
+*.tar.zst
+*.sha256
+!.gitignore

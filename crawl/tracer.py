@@ -34,6 +34,7 @@ class ExecutionTracer:
         network_capture: Optional[Any] = None,
         on_new_page: Optional[Callable[[str], None]] = None,
         construct_edge: Optional[Callable[[str], None]] = None,
+        url_in_scope: Optional[Callable[[str], bool]] = None,
         debug: bool = True,
     ):
         self.store = store
@@ -41,6 +42,7 @@ class ExecutionTracer:
         self.on_new_page = on_new_page
         self.debug = debug
         self.construct_edge = construct_edge
+        self.url_in_scope = url_in_scope
 
         self.trace: Optional[TaskRunTrace] = None
 
@@ -99,6 +101,15 @@ class ExecutionTracer:
         if self.trace is None:
             if self.debug:
                 print("[ExecutionTracer] step() called but no active trace; did you call start_task()?")
+            return
+
+        if self.url_in_scope and (
+            not self.url_in_scope(from_url) or not self.url_in_scope(to_url)
+        ):
+            print(
+                f"[ScopeGuard] Ignoring out-of-scope trace step: "
+                f"{from_url} -> {to_url}"
+            )
             return
 
         if self.debug:
@@ -202,6 +213,8 @@ class ExecutionTracer:
             # Normalize field names
             method = req.get("method", "")
             url = req.get("url", "")
+            if self.url_in_scope and url and not self.url_in_scope(url):
+                continue
             headers = req.get("headers", {}) or {}
             query_params = req.get("query_params", {}) or {}
             body = req.get("body", None)

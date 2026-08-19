@@ -1,0 +1,25 @@
+services:
+  db:
+    image: semscanner-ae-loan-db:1.0
+    environment:
+      MYSQL_DATABASE: loan_db
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - loan-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=root mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  web:
+    image: semscanner-ae-loan-management:1.0
+    ports:
+      - "127.0.0.1:${LOAN_PORT:-8082}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  loan-db:

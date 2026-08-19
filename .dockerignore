@@ -1,0 +1,14 @@
+.git
+.gitignore
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+.env
+.venv
+output
+outputs
+results
+ae_results
+benchmark_apps
+ae/images

@@ -127,6 +127,104 @@ class AttackPlanningAgent:
     def _identify_request(self, request_dict: Dict) -> str:
         return request_dict["id"]
 
+    def _schema_tokens(self, schema: Optional[str]) -> Set[str]:
+        if not schema:
+            return set()
+        return {part.strip() for part in str(schema).split(",") if part.strip()}
+
+    def _iter_graph_requests(self, graph: Optional[Dict] = None):
+        graph = graph or self._load_attack_graph()
+        for node in graph.get("nodes", []):
+            for req in node.get("page_requests", []):
+                yield req
+            for task in node.get("tasks", []):
+                for req in task.get("requests", []):
+                    yield req
+            for req in node.get("outgoing_links", []):
+                yield req
+            for req in node.get("trace_requests", []):
+                yield req
+            for req in node.get("pre_navigation_requests", []):
+                yield req
+
+    def _find_graph_request_by_id(self, ref_id: str) -> Optional[Dict]:
+        for req in self._iter_graph_requests():
+            if req.get("id") == ref_id:
+                return req
+        return None
+
+    def _resolve_request_by_ref_id(self, ref_id: str) -> Tuple[Optional[Dict], bool]:
+        target_request = self.crawler.request_id_map.get(ref_id)
+        if target_request:
+            return target_request, True
+
+        graph_req = self._find_graph_request_by_id(ref_id)
+        if not graph_req:
+            return None, False
+
+        target_request = self._get_or_create_request(
+            graph_req.get("method", "GET"),
+            graph_req.get("url", ""),
+            graph_req.get("body_schema")
+        )
+
+        if target_request:
+            self.crawler.request_id_map[ref_id] = target_request
+            self._log(f"[Info] Resolved graph REF_ID {ref_id} via method/url/body_schema")
+
+        return target_request, True
+
+    def _mark_request_processed(self, ref_id: str, target_request: Optional[Dict] = None, mark_state: bool = True):
+        if mark_state:
+            self.state.tested_requests.add(ref_id)
+        if target_request and hasattr(self.crawler, 'processed_requests'):
+            key = self.crawler._make_dedup_key(
+                target_request.get('method'),
+                target_request.get('url'),
+                target_request.get('body')
+            )
+            self.crawler.processed_requests.add(key)
+
+    def _has_query_params(self, url: str) -> bool:
+        from urllib.parse import urlparse, parse_qs
+
+        parsed = urlparse(url or "")
+        if parse_qs(parsed.query, keep_blank_values=True):
+            return True
+        if parsed.fragment and "?" in parsed.fragment:
+            return bool(parse_qs(parsed.fragment.split("?", 1)[1], keep_blank_values=True))
+        return False
+
+    def _has_dynamic_path_id(self, url: str) -> bool:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url or "")
+        segments = [seg for seg in parsed.path.split("/") if seg]
+        uuid_re = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F-]{13,}$")
+        hex_re = re.compile(r"^[0-9a-fA-F]{8,}$")
+        for seg in segments:
+            if seg.isdigit():
+                return True
+            if uuid_re.match(seg) or hex_re.match(seg):
+                return True
+        return False
+
+    def _is_attack_candidate_request(self, req: Dict) -> bool:
+        method = (req.get("method") or "GET").upper()
+        url = req.get("url", "")
+        url_lower = url.lower()
+        has_body = bool(req.get("body_schema") or req.get("body"))
+
+        if "logout" in url_lower or "action=logout" in url_lower:
+            return False
+        if has_body:
+            return True
+        if method == "GET":
+            return self._has_query_params(url) or self._has_dynamic_path_id(url)
+        if method in {"HEAD", "OPTIONS"}:
+            return False
+        return True
+
     def _calculate_priority(self, request: Dict, node: Dict) -> float:
         """
         Calculate request priority (for sorting during filtering)
@@ -181,12 +279,12 @@ class AttackPlanningAgent:
             try:
                 parsed = urlparse(url)
                 # Check traditional parameters
-                query_params = parse_qs(parsed.query)
+                query_params = parse_qs(parsed.query, keep_blank_values=True)
                 # Check SPA parameters (? in fragment)
                 fragment_params = {}
                 if parsed.fragment and '?' in parsed.fragment:
                     fragment_query = parsed.fragment.split('?', 1)[1]
-                    fragment_params = parse_qs(fragment_query)
+                    fragment_params = parse_qs(fragment_query, keep_blank_values=True)
 
                 total_params = len(query_params) + len(fragment_params)
                 # More parameters = higher priority
@@ -284,6 +382,7 @@ class AttackPlanningAgent:
 
         # ========== Step 1: Collect all requests ==========
         all_requests = []
+        skipped_non_candidates = 0
 
         for node_idx, node in enumerate(graph["nodes"]):
             node_url = node.get("url", "")
@@ -291,7 +390,12 @@ class AttackPlanningAgent:
             # Location 1: page_requests
             for req_idx, req in enumerate(node.get("page_requests", [])):
                 try:
+                    if not self._is_attack_candidate_request(req):
+                        skipped_non_candidates += 1
+                        continue
                     key = self._identify_request(req)
+                    if key in self.state.tested_requests:
+                        continue
                     priority = self._calculate_priority(req, node)
                     all_requests.append({
                         "key": key,
@@ -311,7 +415,12 @@ class AttackPlanningAgent:
                 task_desc = task.get("description", "")
                 for req_idx, req in enumerate(task.get("requests", [])):
                     try:
+                        if not self._is_attack_candidate_request(req):
+                            skipped_non_candidates += 1
+                            continue
                         key = self._identify_request(req)
+                        if key in self.state.tested_requests:
+                            continue
                         priority = self._calculate_priority(req, node)
                         all_requests.append({
                             "key": key,
@@ -331,6 +440,9 @@ class AttackPlanningAgent:
             # Location 3: outgoing_links
             for req_idx, req in enumerate(node.get("outgoing_links", [])):
                 try:
+                    if not self._is_attack_candidate_request(req):
+                        skipped_non_candidates += 1
+                        continue
                     key = self._identify_request(req)
                     # [Fix] If request has already been tested, do not add to candidate list
                     # This way in the next iteration, ranks 81-160 will automatically move up to become Top 80
@@ -354,7 +466,12 @@ class AttackPlanningAgent:
             # Location 4: trace_requests
             for req_idx, req in enumerate(node.get("trace_requests", [])):
                 try:
+                    if not self._is_attack_candidate_request(req):
+                        skipped_non_candidates += 1
+                        continue
                     key = self._identify_request(req)
+                    if key in self.state.tested_requests:
+                        continue
                     priority = self._calculate_priority(req, node)
                     all_requests.append({
                         "key": key,
@@ -372,7 +489,12 @@ class AttackPlanningAgent:
             # Location 5: pre_navigation_requests
             for req_idx, req in enumerate(node.get("pre_navigation_requests", [])):
                 try:
+                    if not self._is_attack_candidate_request(req):
+                        skipped_non_candidates += 1
+                        continue
                     key = self._identify_request(req)
+                    if key in self.state.tested_requests:
+                        continue
                     priority = self._calculate_priority(req, node)
                     all_requests.append({
                         "key": key,
@@ -396,37 +518,39 @@ class AttackPlanningAgent:
             location_stats[loc] = location_stats.get(loc, 0) + 1
 
         self._log(f"[Filter] Collected {total_requests} requests")
+        if skipped_non_candidates:
+            self._log(f"[Filter] Skipped {skipped_non_candidates} non-attackable requests before LLM planning")
         self._log(f"[Filter] Request distribution:")
         for loc, count in sorted(location_stats.items()):
             self._log(f"[Filter]   - {loc}: {count}")
 
         # ========== Step 2: Check if filtering is needed ==========
         if total_requests <= max_requests:
-            self._log(f"[Filter] No filtering needed ({total_requests} <= {max_requests})")
-            self._log(f"[Filter] ===== Filtering complete =====\n")
-            return graph
+            self._log(f"[Filter] No priority filtering needed ({total_requests} <= {max_requests})")
+            selected_requests = all_requests
+            selected_keys = set(req["key"] for req in selected_requests)
+        else:
+            # ========== Step 3: Sort by priority ==========
+            all_requests.sort(key=lambda x: x["priority"], reverse=True)
 
-        # ========== Step 3: Sort by priority ==========
-        all_requests.sort(key=lambda x: x["priority"], reverse=True)
+            # ========== Step 4: Select top max_requests ==========
+            selected_requests = all_requests[:max_requests]
+            selected_keys = set(req["key"] for req in selected_requests)
 
-        # ========== Step 4: Select top max_requests ==========
-        selected_requests = all_requests[:max_requests]
-        selected_keys = set(req["key"] for req in selected_requests)
+            filtered_count = total_requests - max_requests
+            self._log(f"[Filter] Filtered out {filtered_count} low-priority requests")
 
-        filtered_count = total_requests - max_requests
-        self._log(f"[Filter] Filtered out {filtered_count} low-priority requests")
+            # Log: output highest and lowest priority requests (for debugging)
+            self._log(f"[Filter] Top 3 highest priority requests:")
+            for i, req_info in enumerate(selected_requests[:3], 1):
+                req = req_info["request"]
+                self._log(f"[Filter]   {i}. [{req_info['priority']:.1f}] {req.get('method')} {req.get('url')[:70]}...")
 
-        # Log: output highest and lowest priority requests (for debugging)
-        self._log(f"[Filter] Top 3 highest priority requests:")
-        for i, req_info in enumerate(selected_requests[:3], 1):
-            req = req_info["request"]
-            self._log(f"[Filter]   {i}. [{req_info['priority']:.1f}] {req.get('method')} {req.get('url')[:70]}...")
-
-        self._log(f"[Filter] Top 3 filtered out requests:")
-        filtered_out = all_requests[max_requests:]
-        for i, req_info in enumerate(filtered_out[:3], 1):
-            req = req_info["request"]
-            self._log(f"[Filter]   {i}. [{req_info['priority']:.1f}] {req.get('method')} {req.get('url')[:70]}...")
+            self._log(f"[Filter] Top 3 filtered out requests:")
+            filtered_out = all_requests[max_requests:]
+            for i, req_info in enumerate(filtered_out[:3], 1):
+                req = req_info["request"]
+                self._log(f"[Filter]   {i}. [{req_info['priority']:.1f}] {req.get('method')} {req.get('url')[:70]}...")
 
         # ========== Step 5: Filter original graph ==========
         filtered_graph = {"nodes": []}
@@ -524,6 +648,8 @@ class AttackPlanningAgent:
         for node in graph.get("nodes", []):
             # Original field: page_requests
             for req in node.get("page_requests", []):
+                if not self._is_attack_candidate_request(req):
+                    continue
                 key = self._identify_request(req)
                 if key not in self.state.tested_requests:
                     total += 1
@@ -531,24 +657,32 @@ class AttackPlanningAgent:
             # Original field: requests in tasks
             for task in node.get("tasks", []):
                 for req in task.get("requests", []):
+                    if not self._is_attack_candidate_request(req):
+                        continue
                     key = self._identify_request(req)
                     if key not in self.state.tested_requests:
                         total += 1
 
             # Original field: outgoing_links
             for req in node.get("outgoing_links", []):
+                if not self._is_attack_candidate_request(req):
+                    continue
                 key = self._identify_request(req)
                 if key not in self.state.tested_requests:
                     total += 1
 
             # New field: trace_requests (isolated requests from trace files)
             for req in node.get("trace_requests", []):
+                if not self._is_attack_candidate_request(req):
+                    continue
                 key = self._identify_request(req)
                 if key not in self.state.tested_requests:
                     total += 1
 
             # New field: pre_navigation_requests (pre-navigation requests, e.g. login)
             for req in node.get("pre_navigation_requests", []):
+                if not self._is_attack_candidate_request(req):
+                    continue
                 key = self._identify_request(req)
                 if key not in self.state.tested_requests:
                     total += 1
@@ -669,18 +803,20 @@ class AttackPlanningAgent:
 
         if body_schema and method.upper() in ["POST", "PUT", "PATCH"]:
             try:
-                schema_keys = set(k.strip() for k in body_schema.split(','))
+                schema_keys = self._schema_tokens(body_schema)
                 
-                for (r_method, r_url, r_body), req_data in self.crawler.request_mapping.items():
-                    if r_method == method and r_url == url and r_body:
-                        try:
-                            real_keys = set(json.loads(r_body).keys())
-                            
-                            if schema_keys.issubset(real_keys) or len(schema_keys & real_keys) / len(schema_keys) > 0.8:
-                                self._log(f"[Fuzzy Match] Found request via schema matching for {url}")
-                                return req_data
-                        except:
-                            continue
+                for (r_method, r_url, r_body_schema), req_data in self.crawler.request_mapping.items():
+                    if r_method != method or r_url != url or not r_body_schema:
+                        continue
+
+                    real_keys = self._schema_tokens(r_body_schema)
+                    if not real_keys or not schema_keys:
+                        continue
+
+                    similarity = len(schema_keys & real_keys) / max(len(schema_keys), len(real_keys))
+                    if schema_keys.issubset(real_keys) or similarity >= 0.8:
+                        self._log(f"[Fuzzy Match] Found request via schema matching for {url} (similarity {similarity:.1%})")
+                        return req_data
             except Exception as e:
                 self._log(f"[Fuzzy Match] Error: {e}")
 
@@ -720,7 +856,7 @@ class AttackPlanningAgent:
         """Helper function: extract all REF_IDs from text block"""
         ids = []
         for line in text.splitlines():
-            match = re.search(r'(?:REF_)?ID:\s*([a-fA-F0-9]+)', line, re.IGNORECASE)
+            match = re.search(r'(?:REF_)?ID:\s*([A-Za-z0-9_-]+)', line, re.IGNORECASE)
             if match:
                 ids.append(match.group(1).strip())
         return ids
@@ -746,7 +882,7 @@ class AttackPlanningAgent:
                 action_type = action_match.group(1).strip().lower()
                 self._log(f"[AttackPlanningAgent] Detected action: {action_type}")
 
-            if "analyze" in action_type:
+            if "analyze" in action_type or "formulate" in action_type:
                 requests_match = re.search(
                     r'Selected_Requests:\s*\n(.*?)\n\s*(?:Reasoning|Audit_Tasks)',
                     response, re.DOTALL | re.IGNORECASE
@@ -824,7 +960,7 @@ class AttackPlanningAgent:
         Parse format: [TASK_ID] VULN_TYPE | REF_ID: <ID> | DESCRIPTION
         """
         match = re.match(
-            r'\[(\w+)\]\s+([A-Z_]+)\s+\|\s+(?:REF_)?ID:\s*([a-fA-F0-9]+)\s+\|\s+(.+)',
+            r'\[(\w+)\]\s+([A-Z_]+)\s+\|\s+(?:REF_)?ID:\s*([A-Za-z0-9_-]+)\s+\|\s+(.+)',
             task_line.strip(),
             re.IGNORECASE
         )
@@ -870,9 +1006,12 @@ class AttackPlanningAgent:
                 self._log(f"[Warning] Request {ref_id} already tested (history), skipping task {task_id}")
                 continue
 
-            target_request = self.crawler.request_id_map.get(ref_id)
+            target_request, ref_exists_in_graph = self._resolve_request_by_ref_id(ref_id)
             if not target_request:
                 self._log(f"[Error] Task {task_id}: Invalid REF_ID '{ref_id}'")
+                if ref_exists_in_graph:
+                    self._log(f"[Warning] REF_ID '{ref_id}' exists in graph but could not be resolved to a full request; marking processed to avoid planning loop")
+                    self._mark_request_processed(ref_id)
                 continue
             
             account = self.default_account if self.default_account else "default_account"
@@ -907,9 +1046,7 @@ class AttackPlanningAgent:
             
             current_batch_processed_ids.add(ref_id)
             
-            if hasattr(self.crawler, 'processed_requests'):
-                key = self.crawler._make_dedup_key(target_request['method'], target_request['url'], target_request.get('body'))
-                self.crawler.processed_requests.add(key) 
+            self._mark_request_processed(ref_id, target_request, mark_state=False)
 
         if current_batch_processed_ids:
             self._log(f"[AttackPlanningAgent] Marking {len(current_batch_processed_ids)} requests as tested.")
@@ -938,16 +1075,15 @@ class AttackPlanningAgent:
             if ref_id in self.state.tested_requests:
                 continue
             
-            target_request = self.crawler.request_id_map.get(ref_id)
+            target_request, ref_exists_in_graph = self._resolve_request_by_ref_id(ref_id)
             if not target_request:
                 self._log(f"[Warning] Cannot skip invalid ID: {ref_id}")
+                if ref_exists_in_graph:
+                    self._log(f"[Warning] REF_ID '{ref_id}' exists in graph but could not be resolved; marking processed to avoid planning loop")
+                    self._mark_request_processed(ref_id)
                 continue
                 
-            self.state.tested_requests.add(ref_id)
-            
-            if hasattr(self.crawler, 'processed_requests'):
-                key = self.crawler._make_dedup_key(target_request['method'], target_request['url'], target_request.get('body'))
-                self.crawler.processed_requests.add(key)
+            self._mark_request_processed(ref_id, target_request)
                 
             valid_count += 1
             self._log(f"  [SKIPPED] ID: {ref_id}")

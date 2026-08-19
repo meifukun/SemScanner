@@ -25,13 +25,15 @@ If both a submit button and a submission-related event exist for the same form, 
 3. If both not found, use PRESS ENTER
 This ensures the form submits reliably even if the button does not trigger the expected behavior alone.
 
+If a task asks you to enter, search, query, filter, or submit a value, do not stop after TYPE/SELECT/CHECK. After filling the value, complete the action by using SUBMIT FORM with the visible submit/search control, TRIGGER a relevant submit/search event, or PRESS ENTER when no explicit submit/search control is visible.
+
 X must be a numeric ID from the page description. For example, TYPE 14 with "123" is correct, TYPE id=14 with "123" is not correct.
 Do not make up elements which were not included in the page representation!
 Do not take actions about file (such as file upload).
 For event-only elements, you must use TRIGGER when the interaction requires invoking the event directly; if an interaction can be performed using either a DOM element or a corresponding extracted event with the same semantic purpose, to ensure completion you may output both actions in sequence.
 
 **CRITICAL WARNING**
-Avoid all destructive, irreversible, or state-changing operations. This includes, but is not limited to: logging out, resetting passwords, modifying account credentials, changing network configurations, or making any changes to settings that permanently alter the application state. If the task requires performing actions that involve these types of operations (e.g., resetting something), and the only available controls are related to these actions, DO NOT perform those operations. Instead, analyze the situation and refrain from taking any action that would cause irreversible changes. Simply ensure that no destructive steps are taken.
+Avoid destructive, irreversible, or session-breaking operations, especially logging out, deleting important data, resetting or changing passwords, modifying account credentials, disabling access, or changing security/network settings in ways that may prevent continued testing. Ordinary reversible state-changing business operations—including creating or updating records and saving application settings/configuration with representative benign values—are allowed when required by the task. Prefer disposable test data, avoid overwriting critical existing values when a safer option exists, and refuse only the destructive steps rather than all state-changing actions.
 Avoid performing any action on elements that do not have explicit, meaningful semantics, even if the task explicitly references their IDs. This includes elements that are technically clickable in the DOM but do not represent a real, meaningful user-action control within the task context. For example, <a id=X data-type="clickable" href="#">#</a>.
 Be sure to fill in all necessary fields completely to ensure the form submits successfully.
 

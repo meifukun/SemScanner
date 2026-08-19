@@ -5,6 +5,66 @@ Request utility functions
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import json
+import os
+import signal
+import subprocess
+
+
+def _subprocess_output_as_text(value) -> str:
+    """Normalize partial TimeoutExpired output for text-mode callers."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def kill_process_group_and_collect(process, cleanup_timeout: float = 3.0):
+    """Kill a subprocess session and collect output without an unbounded wait.
+
+    The subprocess must have been created with ``start_new_session=True`` (or
+    an equivalent ``setsid`` call).  A killed shell/curl can otherwise leave a
+    pipe descriptor open in a descendant, causing a bare ``communicate()`` to
+    block forever during timeout cleanup.
+
+    Returns ``(stdout, stderr, cleanup_complete)``.  Partial output is returned
+    if the pipes still do not close within ``cleanup_timeout``.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            process.kill()
+        except (ProcessLookupError, OSError):
+            pass
+
+    try:
+        stdout, stderr = process.communicate(timeout=cleanup_timeout)
+        return stdout or "", stderr or "", True
+    except subprocess.TimeoutExpired as exc:
+        stdout = _subprocess_output_as_text(exc.output)
+        stderr = _subprocess_output_as_text(exc.stderr)
+
+        # Do not call communicate() again: a descendant may still own one of
+        # the pipe descriptors.  Closing our readers guarantees bounded local
+        # cleanup even in that case.
+        for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+
+        try:
+            process.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            process.wait(timeout=1.0)
+        except (subprocess.TimeoutExpired, ChildProcessError):
+            pass
+
+        return stdout, stderr, False
 
 
 def check_beacon_detection(token: str, log_file: str = "http_captured.txt") -> bool:
@@ -20,17 +80,40 @@ def check_beacon_detection(token: str, log_file: str = "http_captured.txt") -> b
     Returns:
         True if token found in log, False otherwise
     """
-    log_path = Path(log_file)
+    candidates = []
 
-    if not log_path.exists():
+    for env_name in ("SEMSCANNER_XSS_BEACON_LOG", "XSS_BEACON_LOG", "BEACON_LOG_FILE"):
+        env_value = os.environ.get(env_name)
+        if env_value:
+            candidates.append(Path(env_value))
+
+    if log_file:
+        candidates.append(Path(log_file))
+
+    seen = set()
+    paths = []
+    for path in candidates:
+        key = str(path)
+        if key not in seen:
+            paths.append(path)
+            seen.add(key)
+
+    if not paths:
         return False
 
-    try:
-        with open(log_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            return token in content
-    except Exception:
-        return False
+    for log_path in paths:
+        if not log_path.exists():
+            continue
+
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if token in content:
+                    return True
+        except Exception:
+            continue
+
+    return False
 
 
 def append_credentials_to_command(base_command: str, credentials: Dict,
@@ -265,7 +348,7 @@ def safe_replace_payload(template: str, payload: str) -> str:
 
 
 def execute_curl_safe(template: str, payload: str, credentials: Dict,
-                      timeout: int = 15) -> tuple:
+                      timeout: int = None) -> tuple:
     """
     Execute curl command safely (avoids shell injection and quoting issues)
 
@@ -309,7 +392,7 @@ def execute_curl_safe(template: str, payload: str, credentials: Dict,
             stderr=subprocess.PIPE,
             text=True
         )
-        stdout, stderr = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(timeout=timeout) if timeout is not None else process.communicate()
         return stdout, stderr, process.returncode, final_cmd
 
     except subprocess.TimeoutExpired:
@@ -369,7 +452,7 @@ def parse_http_status_from_response(response: str) -> tuple:
     """
     import re
 
-    pattern = r'\nHTTP_STATUS:(\d+)$'
+    pattern = r'\r?\nHTTP_STATUS:(\d{3})\s*$'
     match = re.search(pattern, response)
 
     if match:

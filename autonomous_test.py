@@ -74,6 +74,7 @@ Example usage:
     client = OpenAI(
         api_key=os.environ.get("LLM_API_KEY", "YOUR_API_KEY_HERE"),
         base_url=os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1"),
+        timeout=float(os.environ.get("LLM_REQUEST_TIMEOUT", "300")),
     )
 
     # Wrap the original client with a tracking wrapper; all LLM calls will automatically record token usage

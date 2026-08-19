@@ -50,11 +50,12 @@ def _norm_url(u: str) -> str:
     return u
 
 class InteractionExecutionAgent:
-    def __init__(self, sensors, actuators, client):
+    def __init__(self, sensors, actuators, client, url_in_scope=None):
         self.sensors = sensors
         self.driver = sensors.driver
         self.actuators = actuators
         self.client = client
+        self.url_in_scope = url_in_scope
         self._tracer = None  # ExecutionTracer, can be set later
         self._task_queue = None   # added
         self._store = None  # WebAppStore reference
@@ -352,6 +353,7 @@ class InteractionExecutionAgent:
         self._log(f"[InteractionExecutionAgent] Executing event {event_id}: type={event_type}, text='{text}', xpath={xpath[:80]}...")
 
         # Locate element
+        elem = None
         try:
             elem = self.driver.find_element(By.XPATH, xpath)
         except Exception as e:
@@ -429,6 +431,13 @@ class InteractionExecutionAgent:
         try:
             self._log("-------------------------------------------------")
             self._log(f"[InteractionExecutionAgent] Starting task {task.task_id}: {task.description}")
+            if self.url_in_scope and not self.url_in_scope(task.initial_url):
+                self._log(
+                    f"[ScopeGuard] Refusing task outside target origin: "
+                    f"{task.initial_url}"
+                )
+                task.set_completed()
+                return
             # Fix: don't reload page, Crawler has already loaded it
             # Check if current URL is already the target URL
             current_url = self.driver.current_url
@@ -444,6 +453,14 @@ class InteractionExecutionAgent:
             need_rescan = False  # Flag for whether rescan is needed (DOM changed but URL didn't)
             while not task.completed:
                 current_url = self.driver.current_url
+                if self.url_in_scope and not self.url_in_scope(current_url):
+                    self._log(
+                        f"[ScopeGuard] Browser left target origin before a task step: "
+                        f"{current_url}"
+                    )
+                    self.driver.get(task.initial_url)
+                    task.set_completed()
+                    break
                 # Don't cache, update everything directly.
                 self.sensors.update_abstract_page()
 
@@ -549,6 +566,10 @@ class InteractionExecutionAgent:
                         back_url = value
                         self._log(f"[InteractionExecutionAgent] Received BACK, navigating to: {back_url}")
                         action_repr = "<navigation: BACK>"
+                        if self.url_in_scope and not self.url_in_scope(back_url):
+                            self._log(f"[ScopeGuard] Refusing out-of-scope BACK URL: {back_url}")
+                            task.set_completed()
+                            break
                         self.driver.get(back_url)
                         success = True  # BACK operation treated as success
                     else:
@@ -603,6 +624,14 @@ class InteractionExecutionAgent:
                     # Check and clear popups
                     clear_alert(self.driver, action="dismiss")
                     new_url = self.driver.current_url
+                    if self.url_in_scope and not self.url_in_scope(new_url):
+                        self._log(
+                            f"[ScopeGuard] Blocking navigation outside target origin: "
+                            f"{old_url} -> {new_url}"
+                        )
+                        self.driver.get(task.initial_url)
+                        task.set_completed()
+                        break
                     new_handles = list(self.driver.window_handles)
                     jump_kind = self._classify_jump(kind, action_id, old_handles, new_handles)
                     # Detect page navigation
@@ -662,4 +691,3 @@ class InteractionExecutionAgent:
         finally:
             # Ensure task log file is closed regardless
             self._close_task_log()
-

@@ -17,13 +17,17 @@ from task.task_queue import TaskQueue
 from task.task_generator import TaskGenerator
 from crawl.tracer import ExecutionTracer
 from task.page_find import ContentDedupeIndex
+from utils.url_scope import UrlScope
 import random
 from selenium.common.exceptions import UnexpectedAlertPresentException, NoAlertPresentException
 
 class Crawler:
-    def __init__(self, driver, client, initial_url, target_domain: str, store_root: str = "output/webapp_store"):
+    def __init__(self, driver, client, initial_url, target_domain: str,
+                 url_scope: UrlScope = None,
+                 store_root: str = "output/webapp_store"):
         self.initial_url = initial_url
         self.target_domain = target_domain
+        self.url_scope = url_scope or UrlScope(initial_url)
         self.driver = driver
 
         # Read from environment variable whether to use improved locator strategy (enabled by default)
@@ -38,7 +42,12 @@ class Crawler:
 
         self.sensors = DOMSemanticExtractor(driver, use_improved_locator=use_improved_locator)
         self.acts = Actuators(self.sensors)
-        self.bridge = InteractionExecutionAgent(sensors=self.sensors, actuators=self.acts, client=client)
+        self.bridge = InteractionExecutionAgent(
+            sensors=self.sensors,
+            actuators=self.acts,
+            client=client,
+            url_in_scope=self.is_url_in_scope,
+        )
         self.root_dir = store_root
         self.store = WebAppStore(root_dir=store_root)
         self.task_queue = TaskQueue(path=os.path.join(store_root, "tasks_queue.jsonl"))
@@ -51,7 +60,8 @@ class Crawler:
             store=self.store,
             network_capture=self.network_capture,
             on_new_page=self._on_new_page_discovered,
-            construct_edge=self.construct_edge
+            construct_edge=self.construct_edge,
+            url_in_scope=self.is_url_in_scope,
         )
         self.bridge.set_tracer(self.tracer, self.task_queue, self.store)  # pass in store
 
@@ -98,6 +108,10 @@ class Crawler:
         self.unique_page_counter = 0  # unique page counter
         self.duplicate_page_counter = 0  # duplicate page counter
         self.url_to_screenshot_id = {}  # URL -> screenshot ID mapping (for duplicate page reference)
+
+    def is_url_in_scope(self, url: str, current_url: str = None) -> bool:
+        """Return whether a page/navigation URL belongs to the target origin."""
+        return self.url_scope.allows_navigation(url, current_url=current_url)
 
     # [crawler.py] Add new method
     def _generate_request_id(self, dedup_key: tuple) -> str:
@@ -473,13 +487,20 @@ class Crawler:
 
     # Two callback functions used by the tracer
     def construct_edge(self, url):
+        if not self.is_url_in_scope(url):
+            self._navlog(f"[ScopeGuard] Skipping edge construction outside target origin: {url}")
+            return
         # Collect all links on this page
         all_links = self._collect_all_page_links()
         self._add_discovered_links_to_graph(url, all_links)
 
     def _add_discovered_links_to_graph(self, from_url: str, links: List[str]):
         """Add discovered links to the graph as potential nodes"""
+        if not self.is_url_in_scope(from_url):
+            return
         for link in links:
+            if not self.is_url_in_scope(link, current_url=from_url):
+                continue
             # Create a "discovered" edge, indicating this link was found on the page but not necessarily visited
             if not self.store.has_edge(from_url, link):
                 edge = Edge(
@@ -493,6 +514,9 @@ class Crawler:
 
     def _on_new_page_discovered(self, url: str):
         """When a new page is discovered, collect page info and generate tasks"""
+        if not self.is_url_in_scope(url):
+            self._navlog(f"[ScopeGuard] Ignoring page outside target origin: {url}")
+            return
         print(f"[Crawler] New page discovered: {url}")
 
         # Wait for page to stabilize
@@ -562,7 +586,8 @@ class Crawler:
 
         new_urls = [
             url for url in all_urls
-            if url not in visited_urls
+            if self.is_url_in_scope(url)
+            and url not in visited_urls
             and url not in nav_queue_set
             and url not in stored_urls
             and not self._is_url_blacklisted(url)
@@ -580,10 +605,10 @@ class Crawler:
                 try:
                     href = elem.get_attribute('href')
                     if href and href.strip():
-                        # Normalize URL
-                        normalized = href.strip()
-                        # Add to link set
-                        if self.target_domain in normalized:
+                        normalized = self.url_scope.resolve(
+                            href, current_url=self.driver.current_url
+                        )
+                        if normalized and self.is_url_in_scope(normalized):
                             links.add(normalized)
                 except Exception:
                     continue
@@ -685,6 +710,10 @@ class Crawler:
                     current_url = nav_queue.pop(idx)
 
                 # Blacklist check
+                if not self.is_url_in_scope(current_url):
+                    self._navlog(f"[ScopeGuard] URL outside target origin, skipping: {current_url}")
+                    continue
+
                 if self._is_url_blacklisted(current_url):
                     self._navlog(f"[Crawl] URL in blacklist, skipping: {current_url}")
                     continue
@@ -704,6 +733,13 @@ class Crawler:
                     self.driver.get(current_url)
                     print("Current page", current_url)
                     time.sleep(self.settle_wait)
+                    if not self.is_url_in_scope(self.driver.current_url):
+                        self._navlog(
+                            f"[ScopeGuard] Navigation left target origin: "
+                            f"{current_url} -> {self.driver.current_url}"
+                        )
+                        self.driver.get(self.initial_url)
+                        continue
                     visited_urls.add(current_url)
 
                     # Try to get page source (if a popup appeared earlier, this will usually throw an exception)
@@ -770,6 +806,8 @@ class Crawler:
                 # 3. Traverse current page links
                 outgoing_links = self.store.get_page(current_url).outgoing_links
                 for link in outgoing_links:
+                    if not self.is_url_in_scope(link, current_url=current_url):
+                        continue
                     if self._is_url_blacklisted(link):
                         continue
                     self._add_discovered_links_to_graph(current_url, [link])
@@ -911,7 +949,11 @@ class Crawler:
     def _filter_valid_nodes_and_edges(self):
         """Filter valid nodes and edges (those that exist in the store)"""
         # Collect valid pages (nodes)
-        valid_pages = {url: self.store.get_page(url) for url in self.store.pages if self.store.has_page(url)}
+        valid_pages = {
+            url: self.store.get_page(url)
+            for url in self.store.pages
+            if self.is_url_in_scope(url) and self.store.has_page(url)
+        }
 
         # Filter edges: only keep edges whose both nodes exist in the store
         valid_edges = [
@@ -980,6 +1022,10 @@ class Crawler:
     # Task execution related
     def run_a_task(self, task, logging_in=False):
         """Execute a task, reusing saved page abstractions"""
+        if not self.is_url_in_scope(task.initial_url):
+            raise ValueError(
+                f"[ScopeGuard] Refusing task outside target origin: {task.initial_url}"
+            )
         self.tracer.start_task(task.task_id, getattr(task, 'description', ''))
 
         if self.network_capture:
@@ -987,6 +1033,11 @@ class Crawler:
 
         self.driver.get(task.initial_url)
         time.sleep(self.settle_wait)
+        if not self.is_url_in_scope(self.driver.current_url):
+            raise ValueError(
+                f"[ScopeGuard] Task navigation left target origin: "
+                f"{task.initial_url} -> {self.driver.current_url}"
+            )
 
         # Load abstract_page and actions_mapping from cache
         page = self.store.get_page(task.initial_url)
