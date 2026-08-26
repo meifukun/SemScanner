@@ -156,12 +156,13 @@ class HighLevelDecisionAgent:
             self.config.update(config)
 
         # Create output directory structure
+        # Note: attack-planning artifacts and attack logs are written under
+        # crawl/attack_planning/ and attack_execution/ respectively, so no
+        # top-level directories are created for them.
         self.dirs = {
             "crawl": self.output_dir / "crawl",
             "task_planning": self.output_dir / "task_planning",
-            "attack_planning": self.output_dir / "attack_planning",
             "attack_execution": self.output_dir / "attack_execution",
-            "attack_logs": self.output_dir / "attack_logs"
         }
         for dir_path in self.dirs.values():
             dir_path.mkdir(parents=True, exist_ok=True)
@@ -739,7 +740,9 @@ class HighLevelDecisionAgent:
                 "start_time": self.state["start_time"],
                 "end_time": datetime.now().isoformat(),
                 "total_duration_seconds": total_duration,
-                "output_directory": str(self.output_dir)
+                # Prefer the evaluator-facing label (e.g. ae_results/<target>/<run-id>)
+                # passed by the AE wrapper; fall back to the raw output path.
+                "output_directory": os.environ.get("SEMSCANNER_RESULTS_LABEL") or str(self.output_dir)
             },
             "crawling": {
                 "total_pages": self.state["pages_count"]

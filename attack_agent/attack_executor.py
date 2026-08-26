@@ -122,9 +122,6 @@ class AttackExecutor:
         self.results = []
         self._log_path = self.log_dir / "executor.log"
 
-        self.screenshot_dir = self.log_dir / "stored_vuln_screenshots"
-        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
-
         self.task_counter = 0
         self.task_counter_lock = threading.Lock()
         self._driver_registry_lock = threading.Lock()

@@ -152,6 +152,10 @@ run_scan() {
     mkdir -p "$result_dir"
     base_container_args "$result_dir"
     DOCKER_ARGS+=(--network "$TARGET_NETWORK")
+    # Evaluator-facing results location recorded in final_report.json
+    # (ae_results/<target>/<run-id> under the default RESULTS_ROOT).
+    local results_label="${result_dir#"$ROOT_DIR"/}"
+    DOCKER_ARGS+=(--env "SEMSCANNER_RESULTS_LABEL=$results_label")
     if [[ "$source_mode" == dev ]]; then
         DOCKER_ARGS+=(--volume "$ROOT_DIR:/opt/semscanner:ro")
     fi
